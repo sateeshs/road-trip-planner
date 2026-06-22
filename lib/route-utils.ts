@@ -1,5 +1,5 @@
-// Approximate driving times between major US cities using straight-line distance heuristic.
-// In production these would come from a routing API.
+// City coordinate lookup — used to resolve city names to lat/lng for ORS API calls.
+// ORS provides real road distances and times; the haversine heuristic has been removed.
 
 export const US_MAJOR_CITIES: Record<string, { lat: number; lng: number; state: string }> = {
   'Chicago': { lat: 41.8781, lng: -87.6298, state: 'IL' },
@@ -27,33 +27,38 @@ export const US_MAJOR_CITIES: Record<string, { lat: number; lng: number; state: 
   'San Francisco': { lat: 37.7749, lng: -122.4194, state: 'CA' },
   'Seattle': { lat: 47.6062, lng: -122.3321, state: 'WA' },
   'Portland': { lat: 45.5231, lng: -122.6765, state: 'OR' },
-}
-
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLng = (lng2 - lng1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
-
-export function estimateDriveTime(fromCity: string, toCity: string): { time: string; miles: string } {
-  const from = US_MAJOR_CITIES[fromCity]
-  const to = US_MAJOR_CITIES[toCity]
-  if (!from || !to) return { time: 'Unknown', miles: 'Unknown' }
-  const km = haversineKm(from.lat, from.lng, to.lat, to.lng)
-  const miles = Math.round(km * 0.621371)
-  // Road distance is ~20% longer than straight-line; average highway speed ~65mph
-  const roadMiles = Math.round(miles * 1.2)
-  const hours = roadMiles / 65
-  const h = Math.floor(hours)
-  const m = Math.round((hours - h) * 60)
-  return { time: `${h}h ${m}m`, miles: `${roadMiles} miles` }
+  'Minneapolis': { lat: 44.9778, lng: -93.2650, state: 'MN' },
+  'Detroit': { lat: 42.3314, lng: -83.0458, state: 'MI' },
+  'Cleveland': { lat: 41.4993, lng: -81.6944, state: 'OH' },
+  'Columbus': { lat: 39.9612, lng: -82.9988, state: 'OH' },
+  'Cincinnati': { lat: 39.1031, lng: -84.5120, state: 'OH' },
+  'Pittsburgh': { lat: 40.4406, lng: -79.9959, state: 'PA' },
+  'Baltimore': { lat: 39.2904, lng: -76.6122, state: 'MD' },
+  'Boston': { lat: 42.3601, lng: -71.0589, state: 'MA' },
+  'Tampa': { lat: 27.9506, lng: -82.4572, state: 'FL' },
+  'Orlando': { lat: 28.5383, lng: -81.3792, state: 'FL' },
+  'Jacksonville': { lat: 30.3322, lng: -81.6557, state: 'FL' },
+  'Savannah': { lat: 32.0809, lng: -81.0912, state: 'GA' },
+  'Richmond': { lat: 37.5407, lng: -77.4360, state: 'VA' },
+  'Raleigh': { lat: 35.7796, lng: -78.6382, state: 'NC' },
+  'Albuquerque': { lat: 35.0844, lng: -106.6504, state: 'NM' },
+  'Oklahoma City': { lat: 35.4676, lng: -97.5164, state: 'OK' },
+  'Tulsa': { lat: 36.1540, lng: -95.9928, state: 'OK' },
+  'Little Rock': { lat: 34.7465, lng: -92.2896, state: 'AR' },
+  'Jackson': { lat: 32.2988, lng: -90.1848, state: 'MS' },
+  'Birmingham': { lat: 33.5186, lng: -86.8104, state: 'AL' },
+  'Knoxville': { lat: 35.9606, lng: -83.9207, state: 'TN' },
+  'Chattanooga': { lat: 35.0456, lng: -85.3097, state: 'TN' },
+  'Lexington': { lat: 38.0406, lng: -84.5037, state: 'KY' },
 }
 
 export function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr)
   d.setDate(d.getDate() + days)
   return d.toISOString().split('T')[0]
+}
+
+/** Resolve a city name to coordinates. Returns null if city is unknown. */
+export function cityCoords(city: string): { lat: number; lng: number; state: string } | null {
+  return US_MAJOR_CITIES[city] ?? null
 }

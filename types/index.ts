@@ -11,12 +11,15 @@ export interface RouteStop {
   city: string
   state: string
   coordinates: { lat: number; lng: number }
-  driveTimeFromPrevious?: string   // e.g. "2h 30m"
-  driveDistanceFromPrevious?: string // e.g. "145 miles"
+  driveTimeFromPrevious?: string    // e.g. "2h 35m" — from ORS real road data
+  driveDistanceFromPrevious?: string // e.g. "145 miles" — from ORS real road data
   stayNights: number
   checkIn: string   // ISO date
   checkOut: string  // ISO date
 }
+
+/** Full driving route geometry from ORS — [lat, lng] pairs ready for Leaflet */
+export type RouteGeometry = [number, number][]
 
 export interface Attraction {
   id: string

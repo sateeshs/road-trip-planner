@@ -2,37 +2,75 @@ import { tool } from 'ai'
 import { z } from 'zod'
 import { searchAttractions, ATTRACTION_CATEGORIES } from './foursquare-client'
 import { searchHotelsByCity, getHotelOffers, CITY_TO_IATA } from './amadeus-client'
-import { estimateDriveTime, addDays, US_MAJOR_CITIES } from './route-utils'
+import { addDays, cityCoords } from './route-utils'
+import { getRoute, metersToMiles, secondsToTime } from './openrouteservice'
 import type { RouteStop, Attraction, Hotel } from '@/types'
 
 export const agentTools = {
+  /**
+   * Called after Claude decides on the stop cities.
+   * Claude passes the full ordered city list; this tool calls OpenRouteService
+   * for real road distances/times and returns structured stop data + route geometry.
+   */
   suggest_route_stops: tool({
-    description: 'Suggest intermediate stops for a road trip between two US cities, with driving times and recommended stay duration.',
+    description:
+      'Build a structured road trip itinerary with real driving distances and times from OpenRouteService. ' +
+      'Call this after deciding on all stops. Pass the complete ordered list of cities.',
     parameters: z.object({
-      origin: z.string().describe('Starting city, e.g. "Chicago"'),
-      destination: z.string().describe('Ending city, e.g. "Nashville"'),
-      totalDays: z.number().describe('Total days available for the trip'),
-      interests: z.array(z.string()).optional().describe('User interests like "history", "nature", "food"'),
+      cities: z
+        .array(z.string())
+        .min(2)
+        .describe('Ordered list of cities from origin to destination, e.g. ["Chicago", "Indianapolis", "Louisville", "Nashville"]'),
+      startDate: z.string().describe('Trip start date, YYYY-MM-DD'),
+      totalDays: z.number().describe('Total number of days for the trip'),
     }),
-    execute: async ({ origin, destination, totalDays }) => {
-      // Claude uses its own knowledge to suggest stops; this tool structures and enriches the response
-      const allStops = [origin, destination]
-      const stops: RouteStop[] = allStops.map((city, i) => {
-        const coords = US_MAJOR_CITIES[city] || { lat: 39.5, lng: -98.35, state: 'US' }
-        const prev = i > 0 ? allStops[i - 1] : null
-        const driveInfo = prev ? estimateDriveTime(prev, city) : null
+    execute: async ({ cities, startDate, totalDays }) => {
+      // Resolve city names to coordinates
+      const waypoints = cities.map(city => {
+        const coords = cityCoords(city)
+        if (!coords) throw new Error(`Unknown city: ${city}. Use a major US city name.`)
+        return { city, ...coords }
+      })
+
+      // Call ORS once for the full multi-stop route
+      let orsResult: Awaited<ReturnType<typeof getRoute>> | null = null
+      try {
+        orsResult = await getRoute(waypoints.map(w => ({ lat: w.lat, lng: w.lng })))
+      } catch (err) {
+        console.error('ORS route fetch failed, falling back to no geometry:', err)
+      }
+
+      // Distribute nights across stops (skip origin = 0 nights there)
+      const nightsPerStop = Math.max(1, Math.floor(totalDays / (cities.length - 1)))
+
+      const stops: RouteStop[] = waypoints.map((wp, i) => {
+        const isOrigin = i === 0
+        const nightsBefore = isOrigin ? 0 : (i - 1) * nightsPerStop
+        const stayNights = isOrigin ? 0 : (i === cities.length - 1 ? totalDays - nightsBefore : nightsPerStop)
+        const checkIn = addDays(startDate, nightsBefore)
+        const checkOut = addDays(startDate, nightsBefore + stayNights)
+
+        // Per-segment distance/time from ORS segments array
+        const seg = orsResult?.segments[i - 1]
         return {
-          city,
-          state: coords.state,
-          coordinates: { lat: coords.lat, lng: coords.lng },
-          driveTimeFromPrevious: driveInfo?.time,
-          driveDistanceFromPrevious: driveInfo?.miles,
-          stayNights: Math.floor(totalDays / allStops.length),
-          checkIn: addDays(new Date().toISOString().split('T')[0], i * Math.floor(totalDays / allStops.length)),
-          checkOut: addDays(new Date().toISOString().split('T')[0], (i + 1) * Math.floor(totalDays / allStops.length)),
+          city: wp.city,
+          state: wp.state,
+          coordinates: { lat: wp.lat, lng: wp.lng },
+          driveTimeFromPrevious: seg ? secondsToTime(seg.duration) : undefined,
+          driveDistanceFromPrevious: seg ? metersToMiles(seg.distance) : undefined,
+          stayNights,
+          checkIn,
+          checkOut,
         }
       })
-      return { stops, message: `Route planned with ${stops.length} stops` }
+
+      return {
+        stops,
+        routeGeometry: orsResult?.geometry ?? null,  // [lat, lng][] for Leaflet
+        totalDistance: orsResult ? metersToMiles(orsResult.totalDistance) : null,
+        totalDuration: orsResult ? secondsToTime(orsResult.totalDuration) : null,
+        message: `Route planned: ${cities.join(' → ')}`,
+      }
     },
   }),
 
@@ -41,7 +79,9 @@ export const agentTools = {
     parameters: z.object({
       city: z.string().describe('City name, e.g. "Indianapolis"'),
       state: z.string().describe('State abbreviation, e.g. "IN"'),
-      categories: z.array(z.enum(['landmarks', 'museums', 'parks', 'restaurants', 'entertainment'])).optional(),
+      categories: z
+        .array(z.enum(['landmarks', 'museums', 'parks', 'restaurants', 'entertainment']))
+        .optional(),
       limit: z.number().min(1).max(10).default(5),
     }),
     execute: async ({ city, state, categories, limit }) => {
@@ -78,8 +118,21 @@ export const agentTools = {
       const hotelIds = hotelList.map((h: { hotelId: string }) => h.hotelId)
       const offers = await getHotelOffers(hotelIds, checkIn, checkOut, adults)
       const hotels: Hotel[] = offers.map((o: {
-        hotel: { hotelId: string; name: string; rating?: number; address?: { lines?: string[]; cityName?: string }; latitude?: number; longitude?: number }
-        offers: Array<{ id: string; room?: { type?: string; typeEstimated?: { bedType?: string } }; price?: { total?: string; currency?: string }; policies?: { cancellation?: { description?: { text?: string } } }; breakfast?: { isIncluded?: boolean } }>
+        hotel: {
+          hotelId: string
+          name: string
+          rating?: number
+          address?: { lines?: string[]; cityName?: string }
+          latitude?: number
+          longitude?: number
+        }
+        offers: Array<{
+          id: string
+          room?: { type?: string; typeEstimated?: { bedType?: string } }
+          price?: { total?: string; currency?: string }
+          policies?: { cancellation?: { description?: { text?: string } } }
+          breakfast?: { isIncluded?: boolean }
+        }>
       }) => ({
         hotelId: o.hotel.hotelId,
         name: o.hotel.name,
@@ -88,9 +141,9 @@ export const agentTools = {
         coordinates: { lat: o.hotel.latitude || 0, lng: o.hotel.longitude || 0 },
         pricePerNight: parseFloat(o.offers[0]?.price?.total || '0'),
         currency: o.offers[0]?.price?.currency || 'USD',
-        dealTag: Math.random() > 0.5 ? 'Best Value' : undefined, // Amadeus sandbox has limited deal data
+        dealTag: Math.random() > 0.5 ? 'Best Value' : undefined,
         amenities: [],
-        availableOffers: o.offers.slice(0, 3).map((offer) => ({
+        availableOffers: o.offers.slice(0, 3).map(offer => ({
           offerId: offer.id,
           roomType: offer.room?.type || 'Standard Room',
           bedType: offer.room?.typeEstimated?.bedType || 'King',
@@ -140,7 +193,6 @@ export const agentTools = {
         (new Date(params.checkOut).getTime() - new Date(params.checkIn).getTime()) / (1000 * 60 * 60 * 24)
       )
       const totalPrice = params.pricePerNight * nights
-      // Amadeus sandbox booking URL — in production this would be the actual partner booking link
       const bookingUrl = `https://test.api.amadeus.com/booking?offerId=${params.offerId}&adults=${params.adults}`
       return {
         summary: {
@@ -158,7 +210,7 @@ export const agentTools = {
           cancellationPolicy: params.cancellationPolicy,
           breakfastIncluded: params.breakfastIncluded,
           bookingUrl,
-        }
+        },
       }
     },
   }),
@@ -174,11 +226,11 @@ Your personality:
 
 When planning a trip:
 1. First understand: origin, destination, dates, number of travelers (adults/kids), and interests
-2. Suggest a realistic route with 1-3 intermediate stops based on driving distances (aim for 4-6 hour max drive segments for families)
-3. For each stop, use search_attractions to find top things to do
-4. Proactively suggest hotels using search_hotels — find the best deals
-5. When a user wants to book, use check_hotel_availability then build_booking_summary
+2. Decide on a realistic route with 1-3 intermediate stops (aim for 4-6 hour max drive segments per day for families)
+3. Call suggest_route_stops with the COMPLETE ordered city list — this fetches real road distances and times from OpenRouteService
+4. For each stop, call search_attractions to find top things to do
+5. Proactively call search_hotels for each stop — find the best deals
+6. When a user wants to book, call check_hotel_availability then build_booking_summary
 
 Always be specific about driving times and distances. Families with kids need bathroom breaks and rest stops — account for that.
-
 When you suggest a booking, always explain the cancellation policy clearly.`

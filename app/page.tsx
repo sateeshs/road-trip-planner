@@ -6,10 +6,11 @@ import ChatPanel from '@/components/ChatPanel'
 import MapView from '@/components/MapView'
 import StopSidebar from '@/components/StopSidebar'
 import BookingReviewModal from '@/components/BookingReviewModal'
-import type { RouteStop, Hotel, Attraction, HotelOffer } from '@/types'
+import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry } from '@/types'
 
 export default function HomePage() {
   const [stops, setStops] = useState<RouteStop[]>([])
+  const [routeGeometry, setRouteGeometry] = useState<RouteGeometry | null>(null)
   const [selectedStop, setSelectedStop] = useState<RouteStop | null>(null)
   const [hotels, setHotels] = useState<Hotel[]>([])
   const [attractions, setAttractions] = useState<Attraction[]>([])
@@ -18,13 +19,14 @@ export default function HomePage() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
     api: '/api/chat',
     onFinish: (message) => {
-      // Extract structured data from tool results in assistant message
       const parts = (message as { parts?: Array<{ type: string; toolName?: string; result?: unknown }> }).parts || []
       for (const part of parts) {
         if (part.type === 'tool-result') {
           const result = part.result as Record<string, unknown>
-          if (part.toolName === 'suggest_route_stops' && result?.stops) {
-            setStops(result.stops as RouteStop[])
+          if (part.toolName === 'suggest_route_stops') {
+            if (result?.stops) setStops(result.stops as RouteStop[])
+            // routeGeometry is [lat, lng][] from ORS — null if ORS call failed
+            if (result?.routeGeometry) setRouteGeometry(result.routeGeometry as RouteGeometry)
           }
           if (part.toolName === 'search_hotels' && result?.hotels) {
             setHotels(result.hotels as Hotel[])
@@ -64,6 +66,7 @@ export default function HomePage() {
           <MapView
             stops={stops}
             attractions={attractions}
+            routeGeometry={routeGeometry}
             selectedStop={selectedStop}
             onStopClick={setSelectedStop}
           />
