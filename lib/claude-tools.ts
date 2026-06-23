@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { searchAttractions, searchSurroundings, ATTRACTION_CATEGORIES, type SurroundingsCategory } from './foursquare-client'
 import { searchHotelsByCity, getHotelOffers, CITY_TO_IATA } from './amadeus-client'
 import { addDays, cityCoords } from './route-utils'
-import { getRoute, metersToMiles, secondsToTime } from './openrouteservice'
+import { getRoute, metersToMiles, secondsToTime } from './osrm-client'
 import type { RouteStop, Attraction, Hotel } from '@/types'
 
 export const agentTools = {
