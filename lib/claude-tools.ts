@@ -25,12 +25,21 @@ export const agentTools = {
       totalDays: z.number().describe('Total number of days for the trip'),
     }),
     execute: async ({ cities, startDate, totalDays }) => {
-      // Resolve city names to coordinates
-      const waypoints = cities.map(city => {
+      // Resolve city names to coordinates — returns error message instead of throwing
+      // so the AI can self-correct by repicking cities from the known list
+      const waypoints: Array<{ city: string; lat: number; lng: number; state: string }> = []
+      const unknown: string[] = []
+      for (const city of cities) {
         const coords = cityCoords(city)
-        if (!coords) throw new Error(`Unknown city: ${city}. Use a major US city name.`)
-        return { city, ...coords }
-      })
+        if (!coords) unknown.push(city)
+        else waypoints.push({ city: city.replace(/,?\s+[A-Z]{2}$/, '').trim(), ...coords })
+      }
+      if (unknown.length > 0) {
+        return {
+          error: `Unknown cities: ${unknown.join(', ')}. Only use major US city names (no state suffix) from this list: Chicago, Indianapolis, Louisville, Nashville, Atlanta, Miami, New York, Philadelphia, Washington DC, Charlotte, Dallas, Houston, San Antonio, Austin, New Orleans, Memphis, St. Louis, Kansas City, Denver, Phoenix, Las Vegas, Los Angeles, San Francisco, Seattle, Portland, Minneapolis, Detroit, Cleveland, Columbus, Cincinnati, Pittsburgh, Baltimore, Boston, Tampa, Orlando, Jacksonville, Savannah, Richmond, Raleigh, Albuquerque, Oklahoma City, Tulsa, Little Rock, Jackson, Birmingham, Knoxville, Chattanooga, Lexington`,
+          stops: [],
+        }
+      }
 
       // Call ORS once for the full multi-stop route
       let orsResult: Awaited<ReturnType<typeof getRoute>> | null = null
@@ -262,6 +271,8 @@ When planning a trip:
 1. First understand: origin, destination, dates, number of travelers (adults/kids), and interests
 2. Decide on a realistic route with 1-3 intermediate stops (aim for 4-6 hour max drive segments per day for families)
 3. Call suggest_route_stops with the COMPLETE ordered city list — this fetches real road distances and times from OpenRouteService
+   IMPORTANT: Pass only plain city names (no state suffix) from this exact list: Chicago, Indianapolis, Louisville, Nashville, Atlanta, Miami, New York, Philadelphia, Washington DC, Charlotte, Dallas, Houston, San Antonio, Austin, New Orleans, Memphis, St. Louis, Kansas City, Denver, Phoenix, Las Vegas, Los Angeles, San Francisco, Seattle, Portland, Minneapolis, Detroit, Cleveland, Columbus, Cincinnati, Pittsburgh, Baltimore, Boston, Tampa, Orlando, Jacksonville, Savannah, Richmond, Raleigh, Albuquerque, Oklahoma City, Tulsa, Little Rock, Jackson, Birmingham, Knoxville, Chattanooga, Lexington
+   Pick the closest major city from the list if the exact city isn't available. Never pass a city not on this list.
 4. For each stop, call search_attractions to find top things to do
 5. Proactively call search_hotels for each stop — find the best deals
 6. When a user wants to book, call check_hotel_availability then build_booking_summary

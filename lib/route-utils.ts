@@ -58,7 +58,19 @@ export function addDays(dateStr: string, days: number): string {
   return d.toISOString().split('T')[0]
 }
 
-/** Resolve a city name to coordinates. Returns null if city is unknown. */
+/** Resolve a city name to coordinates.
+ *  Strips optional state suffix ("Austin, TX" → "Austin"), normalises case.
+ *  Returns null if city is unknown.
+ */
 export function cityCoords(city: string): { lat: number; lng: number; state: string } | null {
-  return US_MAJOR_CITIES[city] ?? null
+  // Strip trailing ", ST" or " ST" state suffixes the model sometimes appends
+  const stripped = city.replace(/,?\s+[A-Z]{2}$/, '').trim()
+  // Try exact match first, then case-insensitive
+  const exact = US_MAJOR_CITIES[stripped]
+  if (exact) return exact
+  const lower = stripped.toLowerCase()
+  const entry = Object.entries(US_MAJOR_CITIES).find(
+    ([k]) => k.toLowerCase() === lower
+  )
+  return entry ? entry[1] : null
 }
