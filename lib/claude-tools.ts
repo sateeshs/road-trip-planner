@@ -449,15 +449,22 @@ export const agentTools = {
         }
       })
 
-      // Auto-populate surroundings for ALL non-origin stops in parallel.
-      // This removes the dependency on the AI calling explore_surroundings as a
-      // separate tool — critical because the 30s edge timeout is often reached
-      // before the AI gets to that step (especially when geocoding is slow).
+      // Auto-populate surroundings ONLY for water-adjacent stops (lakes, rivers, harbors)
+      // so cruise/kayak activities appear without waiting for a separate explore_surroundings call.
+      // Hard cap of 5s per query so we don't consume the 30s edge budget that
+      // search_attractions and search_hotels need.
       const surroundingsByCity: Record<string, Attraction[]> = {}
+      const waterStops = stops.slice(1).filter(s => isWaterAdjacent(s.coordinates.lat, s.coordinates.lng, s.city))
       await Promise.all(
-        stops.slice(1).map(async s => {
+        waterStops.map(async s => {
           try {
-            const surr = await osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 8)
+            const timeout = new Promise<Attraction[]>((_, reject) =>
+              setTimeout(() => reject(new Error('auto-surr timeout')), 5000)
+            )
+            const surr = await Promise.race([
+              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 5),
+              timeout,
+            ])
             if (surr.length > 0) surroundingsByCity[s.city] = surr
           } catch { /* silent — surroundings are non-critical */ }
         })
