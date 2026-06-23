@@ -7,6 +7,7 @@ import MapView from '@/components/MapView'
 import StopSidebar from '@/components/StopSidebar'
 import BookingReviewModal, { type BookingSummary } from '@/components/BookingReviewModal'
 import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry } from '@/types'
+import type { SurroundingsCategory } from '@/lib/foursquare-client'
 
 export default function HomePage() {
   const [stops, setStops] = useState<RouteStop[]>([])
@@ -14,9 +15,11 @@ export default function HomePage() {
   const [selectedStop, setSelectedStop] = useState<RouteStop | null>(null)
   const [hotels, setHotels] = useState<Hotel[]>([])
   const [attractions, setAttractions] = useState<Attraction[]>([])
+  const [surroundings, setSurroundings] = useState<Attraction[]>([])
+  const [isSurroundingsLoading, setIsSurroundingsLoading] = useState(false)
   const [bookingSummary, setBookingSummary] = useState<BookingSummary | null>(null)
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
+  const { messages, input, handleInputChange, handleSubmit, isLoading, append } = useChat({
     api: '/api/chat',
     onFinish: (message) => {
       const parts = (message as { parts?: Array<{ type: string; toolName?: string; result?: unknown }> }).parts || []
@@ -25,7 +28,6 @@ export default function HomePage() {
           const result = part.result as Record<string, unknown>
           if (part.toolName === 'suggest_route_stops') {
             if (result?.stops) setStops(result.stops as RouteStop[])
-            // routeGeometry is [lat, lng][] from ORS — null if ORS call failed
             if (result?.routeGeometry) setRouteGeometry(result.routeGeometry as RouteGeometry)
           }
           if (part.toolName === 'search_hotels' && result?.hotels) {
@@ -33,6 +35,10 @@ export default function HomePage() {
           }
           if (part.toolName === 'search_attractions' && result?.attractions) {
             setAttractions(result.attractions as Attraction[])
+          }
+          if (part.toolName === 'explore_surroundings' && result?.surroundings) {
+            setSurroundings(result.surroundings as Attraction[])
+            setIsSurroundingsLoading(false)
           }
           if (part.toolName === 'build_booking_summary' && result?.summary) {
             setBookingSummary(result.summary as BookingSummary)
@@ -42,12 +48,23 @@ export default function HomePage() {
     },
   })
 
+  /** Called from SurroundingsCategoryPicker — sends a chat message to trigger the explore_surroundings tool */
+  async function handleExploreSurroundings(city: string, state: string, categories: SurroundingsCategory[]) {
+    setSurroundings([])
+    setIsSurroundingsLoading(true)
+    const categoryLabels = categories.join(', ')
+    await append({
+      role: 'user',
+      content: `Find ${categoryLabels} activities near ${city}, ${state}`,
+    })
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Left: Chat */}
       <div className="w-full md:w-[420px] flex-shrink-0 flex flex-col border-r border-gray-200 bg-white">
         <header className="px-4 py-3 border-b border-gray-100 bg-white">
-          <h1 className="text-lg font-semibold text-gray-900">Road Trip Planner</h1>
+          <h1 className="text-lg font-semibold text-gray-900">🗺️ Road Trip Planner</h1>
           <p className="text-xs text-gray-500">Powered by Claude AI</p>
         </header>
         <ChatPanel
@@ -68,18 +85,24 @@ export default function HomePage() {
             attractions={attractions}
             routeGeometry={routeGeometry}
             selectedStop={selectedStop}
-            onStopClick={setSelectedStop}
+            onStopClick={(stop) => {
+              setSelectedStop(stop)
+              // Reset surroundings when switching stops
+              setSurroundings([])
+            }}
           />
         </div>
 
-        {/* Bottom: Stop info when a stop is selected */}
+        {/* Bottom: Stop detail panel */}
         {selectedStop && (
-          <div className="h-64 border-t border-gray-200 overflow-y-auto bg-white">
+          <div className="h-72 border-t border-gray-200 bg-white flex flex-col">
             <StopSidebar
               stop={selectedStop}
               hotels={hotels}
               attractions={attractions}
-              onClose={() => setSelectedStop(null)}
+              surroundings={surroundings}
+              isSurroundingsLoading={isSurroundingsLoading}
+              onClose={() => { setSelectedStop(null); setSurroundings([]) }}
               onSelectHotel={(hotel: Hotel, offer: HotelOffer) => {
                 setBookingSummary({
                   hotelId: hotel.hotelId,
@@ -98,6 +121,7 @@ export default function HomePage() {
                   bookingUrl: offer.bookingUrl || '#',
                 })
               }}
+              onExploreSurroundings={handleExploreSurroundings}
             />
           </div>
         )}

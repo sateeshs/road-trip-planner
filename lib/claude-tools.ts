@@ -1,6 +1,6 @@
 import { tool } from 'ai'
 import { z } from 'zod'
-import { searchAttractions, ATTRACTION_CATEGORIES } from './foursquare-client'
+import { searchAttractions, searchSurroundings, ATTRACTION_CATEGORIES, type SurroundingsCategory } from './foursquare-client'
 import { searchHotelsByCity, getHotelOffers, CITY_TO_IATA } from './amadeus-client'
 import { addDays, cityCoords } from './route-utils'
 import { getRoute, metersToMiles, secondsToTime } from './openrouteservice'
@@ -157,6 +157,40 @@ export const agentTools = {
     },
   }),
 
+  explore_surroundings: tool({
+    description:
+      'Search for outdoor activities and surroundings near a road trip stop — camping, kayaking, hiking, ATV rides, fishing, rafting, boating, rock climbing, horseback riding, and more. ' +
+      'Call this when the user asks about outdoor activities, adventures, or things to do in nature near a stop. ' +
+      'Also call proactively when a stop is near a national park, lake, river, or mountain area.',
+    parameters: z.object({
+      city: z.string().describe('City name of the road trip stop'),
+      state: z.string().describe('State abbreviation, e.g. "TN"'),
+      activities: z
+        .array(z.enum([
+          'camping', 'kayaking', 'hiking', 'cycling', 'atv_rides',
+          'horseback', 'rock_climbing', 'fishing', 'swimming',
+          'rafting', 'boating', 'scenic_views', 'skiing', 'waterfalls',
+        ]))
+        .min(1)
+        .describe('Activity types to search for. Pick the most relevant ones for the area.'),
+      limit: z.number().min(1).max(12).default(8),
+    }),
+    execute: async ({ city, state, activities, limit }) => {
+      const places = await searchSurroundings(city, state, activities as SurroundingsCategory[], limit)
+      const results = places.map(p => ({
+        id: p.fsq_id,
+        name: p.name,
+        category: p.categories[0]?.name || 'Outdoor Activity',
+        rating: p.rating,
+        address: p.location.formatted_address,
+        coordinates: { lat: p.geocodes.main.latitude, lng: p.geocodes.main.longitude },
+        description: p.description,
+        website: p.website,
+      }))
+      return { surroundings: results, city, activities }
+    },
+  }),
+
   check_hotel_availability: tool({
     description: 'Check detailed availability and room options for a specific hotel.',
     parameters: z.object({
@@ -233,4 +267,10 @@ When planning a trip:
 6. When a user wants to book, call check_hotel_availability then build_booking_summary
 
 Always be specific about driving times and distances. Families with kids need bathroom breaks and rest stops — account for that.
-When you suggest a booking, always explain the cancellation policy clearly.`
+When you suggest a booking, always explain the cancellation policy clearly.
+
+For outdoor/surroundings exploration:
+- Call explore_surroundings proactively when a stop is near a national park, lake, river, mountain, or forest
+- Suggest camping near national parks, kayaking near rivers/lakes, hiking near mountains, ATV near desert/rural areas
+- When the user mentions interests like "outdoor", "nature", "adventure", "family activities" — call explore_surroundings for relevant stops
+- Present surroundings results with their emoji (⛺ camping, 🚣 kayaking, 🥾 hiking, etc.) for quick scanning`
