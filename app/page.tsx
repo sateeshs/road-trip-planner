@@ -5,7 +5,7 @@ import { useChat } from 'ai/react'
 import ChatPanel from '@/components/ChatPanel'
 import MapView from '@/components/MapView'
 import StopSidebar from '@/components/StopSidebar'
-import BookingReviewModal from '@/components/BookingReviewModal'
+import BookingReviewModal, { type BookingSummary } from '@/components/BookingReviewModal'
 import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry } from '@/types'
 
 export default function HomePage() {
@@ -14,7 +14,7 @@ export default function HomePage() {
   const [selectedStop, setSelectedStop] = useState<RouteStop | null>(null)
   const [hotels, setHotels] = useState<Hotel[]>([])
   const [attractions, setAttractions] = useState<Attraction[]>([])
-  const [bookingSummary, setBookingSummary] = useState<Record<string, unknown> | null>(null)
+  const [bookingSummary, setBookingSummary] = useState<BookingSummary | null>(null)
 
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
     api: '/api/chat',
@@ -35,7 +35,7 @@ export default function HomePage() {
             setAttractions(result.attractions as Attraction[])
           }
           if (part.toolName === 'build_booking_summary' && result?.summary) {
-            setBookingSummary(result.summary as Record<string, unknown>)
+            setBookingSummary(result.summary as BookingSummary)
           }
         }
       }
@@ -87,6 +87,7 @@ export default function HomePage() {
                   offerId: offer.offerId,
                   roomType: offer.roomType,
                   pricePerNight: offer.price,
+                  totalPrice: offer.price * selectedStop.stayNights,
                   currency: offer.currency,
                   checkIn: selectedStop.checkIn,
                   checkOut: selectedStop.checkOut,
@@ -108,7 +109,7 @@ export default function HomePage() {
           summary={bookingSummary}
           onClose={() => setBookingSummary(null)}
           onConfirm={() => {
-            window.open(bookingSummary.bookingUrl as string, '_blank', 'noopener,noreferrer')
+            window.open(bookingSummary.bookingUrl, '_blank', 'noopener,noreferrer')
             setBookingSummary(null)
           }}
         />
