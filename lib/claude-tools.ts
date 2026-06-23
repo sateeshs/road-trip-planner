@@ -94,21 +94,26 @@ export const agentTools = {
       limit: z.number().min(1).max(10).default(5),
     }),
     execute: async ({ city, state, categories, limit }) => {
-      const catIds = (categories || ['landmarks', 'museums', 'parks'])
-        .map(c => ATTRACTION_CATEGORIES[c as keyof typeof ATTRACTION_CATEGORIES])
-        .filter(Boolean)
-      const places = await searchAttractions(city, state, catIds, limit)
-      const attractions: Attraction[] = places.map(p => ({
-        id: p.fsq_id,
-        name: p.name,
-        category: p.categories[0]?.name || 'Attraction',
-        rating: p.rating,
-        address: p.location.formatted_address,
-        coordinates: { lat: p.geocodes.main.latitude, lng: p.geocodes.main.longitude },
-        description: p.description,
-        website: p.website,
-      }))
-      return { attractions, city }
+      try {
+        const catIds = (categories || ['landmarks', 'museums', 'parks'])
+          .map(c => ATTRACTION_CATEGORIES[c as keyof typeof ATTRACTION_CATEGORIES])
+          .filter(Boolean)
+        const places = await searchAttractions(city, state, catIds, limit)
+        const attractions: Attraction[] = places.map(p => ({
+          id: p.fsq_id,
+          name: p.name,
+          category: p.categories[0]?.name || 'Attraction',
+          rating: p.rating,
+          address: p.location.formatted_address,
+          coordinates: { lat: p.geocodes.main.latitude, lng: p.geocodes.main.longitude },
+          description: p.description,
+          website: p.website,
+        }))
+        return { attractions, city }
+      } catch (err) {
+        console.error('search_attractions failed:', err)
+        return { attractions: [], city, error: 'Attractions API unavailable — FOURSQUARE_API_KEY may not be configured.' }
+      }
     },
   }),
 
@@ -121,6 +126,7 @@ export const agentTools = {
       adults: z.number().min(1).max(8).default(2),
     }),
     execute: async ({ city, checkIn, checkOut, adults }) => {
+      try {
       const cityCode = CITY_TO_IATA[city]
       if (!cityCode) return { hotels: [], error: `Unknown city: ${city}` }
       const hotelList = await searchHotelsByCity(cityCode)
@@ -163,6 +169,10 @@ export const agentTools = {
         })),
       }))
       return { hotels, city, checkIn, checkOut }
+      } catch (err) {
+        console.error('search_hotels failed:', err)
+        return { hotels: [], city, checkIn, checkOut, error: 'Hotels API unavailable — AMADEUS_CLIENT_ID/SECRET may not be configured.' }
+      }
     },
   }),
 
@@ -185,18 +195,23 @@ export const agentTools = {
       limit: z.number().min(1).max(12).default(8),
     }),
     execute: async ({ city, state, activities, limit }) => {
-      const places = await searchSurroundings(city, state, activities as SurroundingsCategory[], limit)
-      const results = places.map(p => ({
-        id: p.fsq_id,
-        name: p.name,
-        category: p.categories[0]?.name || 'Outdoor Activity',
-        rating: p.rating,
-        address: p.location.formatted_address,
-        coordinates: { lat: p.geocodes.main.latitude, lng: p.geocodes.main.longitude },
-        description: p.description,
-        website: p.website,
-      }))
-      return { surroundings: results, city, activities }
+      try {
+        const places = await searchSurroundings(city, state, activities as SurroundingsCategory[], limit)
+        const results = places.map(p => ({
+          id: p.fsq_id,
+          name: p.name,
+          category: p.categories[0]?.name || 'Outdoor Activity',
+          rating: p.rating,
+          address: p.location.formatted_address,
+          coordinates: { lat: p.geocodes.main.latitude, lng: p.geocodes.main.longitude },
+          description: p.description,
+          website: p.website,
+        }))
+        return { surroundings: results, city, activities }
+      } catch (err) {
+        console.error('explore_surroundings failed:', err)
+        return { surroundings: [], city, activities, error: 'Surroundings API unavailable — FOURSQUARE_API_KEY may not be configured.' }
+      }
     },
   }),
 
@@ -210,9 +225,14 @@ export const agentTools = {
       adults: z.number().default(2),
     }),
     execute: async ({ hotelId, hotelName, checkIn, checkOut, adults }) => {
-      const offers = await getHotelOffers([hotelId], checkIn, checkOut, adults)
-      if (!offers.length) return { available: false, hotelId, hotelName }
-      return { available: true, hotelId, hotelName, checkIn, checkOut, offers: offers[0]?.offers || [] }
+      try {
+        const offers = await getHotelOffers([hotelId], checkIn, checkOut, adults)
+        if (!offers.length) return { available: false, hotelId, hotelName }
+        return { available: true, hotelId, hotelName, checkIn, checkOut, offers: offers[0]?.offers || [] }
+      } catch (err) {
+        console.error('check_hotel_availability failed:', err)
+        return { available: false, hotelId, hotelName, error: 'Hotel availability API unavailable.' }
+      }
     },
   }),
 
