@@ -522,9 +522,9 @@ export const agentTools = {
 (
   node["leisure"~"park|nature_reserve|marina|swimming_pool|golf_course|water_park"](around:${r},${lat},${lng});
   node["sport"~"hiking|cycling|kayak|kayaking|canoe|canoeing|climbing|fishing|skiing|swimming|rafting|sailing|windsurfing|rowing"](around:${r},${lat},${lng});
-  node["tourism"~"camp_site|caravan_site"](around:${r},${lat},${lng});
+  node["tourism"~"attraction|viewpoint|theme_park|zoo|aquarium"](around:${r},${lat},${lng});
+  node["tourism"~"camp_site|caravan_site|boat_tour"](around:${r},${lat},${lng});
   node["leisure"="camp_site"](around:${r},${lat},${lng});
-  node["tourism"="boat_tour"](around:${r},${lat},${lng});
   node["amenity"~"boat_rental"](around:${r},${lat},${lng});
   node["natural"~"waterfall|beach|peak|hot_spring|cave_entrance"](around:${r},${lat},${lng});
   node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift|waterfall"](around:${r},${lat},${lng});
@@ -540,8 +540,22 @@ out ${limit * 2};`
           const name = tags.name ?? tags['name:en'] ?? tags.brand
           if (!elLat || !elLng || !name || seen.has(name)) continue
           seen.add(name)
-          const cat =
-            tags.amenity === 'boat_rental' ? 'Boat / Kayak Rental' :
+          // For generic tourism=attraction, infer category from name keywords
+          const nameLower = (name ?? '').toLowerCase()
+          const inferredCat =
+            tags.tourism === 'attraction' ? (
+              /cruise|boat.?tour|ship|sail|ferry|charter/.test(nameLower) ? 'Boat Tour / Cruise' :
+              /kayak|canoe|paddle/.test(nameLower) ? 'Kayaking' :
+              /zip.?line|canopy|aerial/.test(nameLower) ? 'Zip Line' :
+              /horse|equestri/.test(nameLower) ? 'Horseback Riding' :
+              /climb|rappel/.test(nameLower) ? 'Rock Climbing' :
+              /raft|tubing|float/.test(nameLower) ? 'Rafting' :
+              /waterfall|falls/.test(nameLower) ? 'Waterfall' :
+              /hike|trail|scenic/.test(nameLower) ? 'Hiking / Scenic' :
+              'Attraction'
+            ) : null
+          const cat = inferredCat ??
+            (tags.amenity === 'boat_rental' ? 'Boat / Kayak Rental' :
             tags.tourism === 'boat_tour' ? 'Boat Tour' :
             tags.tourism === 'camp_site' || tags.leisure === 'camp_site' ? 'Campground' :
             tags.tourism === 'caravan_site' ? 'RV Park' :
@@ -566,7 +580,7 @@ out ${limit * 2};`
             tags.leisure === 'marina' ? 'Marina' :
             tags.leisure === 'water_park' ? 'Water Park' :
             tags.leisure ? tags.leisure.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) :
-            'Outdoor Activity'
+            'Outdoor Activity')
           surroundings.push({
             id: `osm-${el.type}-${el.id}`,
             name,
@@ -657,21 +671,23 @@ Your personality:
 - Proactive — if a stop seems obvious or famous, suggest it even if the user didn't ask
 - Helpful with logistics — hotel deals, check-in times, route optimization
 
-TOOL CALL ORDER — always follow this sequence, never skip steps:
-1. **Plan immediately** — user gives origin + destination → start planning, no clarifying questions. Defaults: today's date, 2 adults, direct route with 1-2 stops for trips under 10 hours.
+TOOL CALL ORDER — always follow this sequence exactly, never skip a step:
+1. **Plan immediately** — user gives origin + destination → start planning, no clarifying questions. Defaults: today's date, 2 adults, 1-2 stops for trips under 10 hours.
 2. Pick a realistic route with 1-3 intermediate stops (max 4-6 hour drive segments per day).
 3. Call **suggest_route_stops** first.
 4. Call **search_attractions** for every stop.
 5. Call **search_hotels** for every stop.
-6. ONLY AFTER steps 3-5: call **explore_surroundings** for stops near nature (parks, lakes, rivers, coasts, mountains). Geography guide:
-   - Coastal/harbor/bay → cruise, boat_tour, kayaking, fishing, swimming
-   - Lakes/rivers → kayaking, boating, boat_tour, rafting, fishing
+6. Call **explore_surroundings** for EVERY intermediate stop and the destination — this is mandatory, not optional. Pick activities by geography:
+   - Great Lakes / Lake Superior / rivers / canals / harbors → cruise, boat_tour, kayaking, fishing, boating, swimming
+   - Coastal/bay cities → cruise, boat_tour, kayaking, fishing, swimming
+   - National parks / forests / lakeshore → hiking, kayaking, camping, scenic_views, waterfalls, boat_tour
    - Mountains/resorts → hiking, rock_climbing, zip_line, scenic_ride, skiing
-   - National parks/forests → hiking, camping, scenic_views, waterfalls
    - Desert/rural → atv_rides, horseback, camping, scenic_views
+   - Any stop with locks, canals, or boat tours in the name → cruise, boat_tour, kayaking
 7. To book: call check_hotel_availability → build_booking_summary.
 
-Be specific about drive times/distances. Families need rest stops. Explain cancellation policies.
+Be specific about drive times/distances. Families with children need rest stops — account for that.
+Explain cancellation policies when suggesting a booking.
 Present surroundings with emoji: ⛺ camping, 🚣 kayaking, 🥾 hiking, 🚢 cruise, 🛥️ boat_tour, 🪂 zip_line, 🚂 scenic_ride.
 
 When user right-clicks map ("I right-clicked on the map at {city}, {state}"):
