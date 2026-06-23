@@ -2,9 +2,11 @@
 
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 }
 
-/* Leaflet overrides */
+/* Leaflet */
 .leaflet-container { height: 100%; width: 100%; z-index: 0; }
 .leaflet-control-attribution { font-size: 10px !important; }
+.leaflet-control-zoom { margin-right: 16px !important; margin-bottom: 100px !important; }

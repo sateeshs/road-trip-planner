@@ -8,62 +8,78 @@ interface ChatPanelProps {
   messages: Message[]
   input: string
   isLoading: boolean
+  collapsed: boolean
+  onToggle: () => void
   onInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void
+  onSuggestionSelect: (text: string) => void
 }
 
-const SUGGESTIONS = [
-  'Plan a road trip from Chicago to Nashville for 4 people, July 4-10',
-  'Family trip from NYC to Miami, 5 days, 2 adults 2 kids',
-  'Road trip from Dallas to New Orleans, weekend trip',
-]
-
-export default function ChatPanel({ messages, input, isLoading, onInputChange, onSubmit }: ChatPanelProps) {
+export default function ChatPanel({
+  messages, input, isLoading, collapsed, onToggle,
+  onInputChange, onSubmit, onSuggestionSelect,
+}: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Collapsed state: show only the toggle tab
+  if (collapsed) {
+    return (
+      <button
+        onClick={onToggle}
+        className="absolute left-0 top-1/2 -translate-y-1/2 z-[1000] bg-white/90 backdrop-blur-md border border-white/40 shadow-lg rounded-r-xl px-2 py-4 flex flex-col items-center gap-1 hover:bg-blue-600 hover:text-white transition-colors group"
+        title="Open chat"
+      >
+        <span className="text-lg">💬</span>
+        <span className="text-xs font-medium [writing-mode:vertical-rl] text-gray-600 group-hover:text-white">Chat</span>
+      </button>
+    )
+  }
+
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="absolute left-4 top-4 bottom-4 w-80 z-[1000] flex flex-col bg-white/92 backdrop-blur-xl border border-white/40 shadow-2xl rounded-2xl overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100/80 bg-white/50">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🗺️</span>
+          <div>
+            <h1 className="text-sm font-bold text-gray-900 leading-tight">Road Trip Planner</h1>
+            <p className="text-xs text-gray-400">AI-powered · Free</p>
+          </div>
+        </div>
+        <button
+          onClick={onToggle}
+          className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors"
+          title="Collapse chat"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+      </div>
+
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.length === 0 && (
-          <div className="text-center py-8">
-            <div className="text-4xl mb-3">🚗</div>
-            <h2 className="text-base font-semibold text-gray-800 mb-1">Plan your road trip</h2>
-            <p className="text-sm text-gray-500 mb-6">Tell me where you want to go and I&apos;ll handle the rest.</p>
-            <div className="space-y-2">
-              {SUGGESTIONS.map(s => (
-                <button
-                  key={s}
-                  className="w-full text-left text-sm px-3 py-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-                  onClick={() => {
-                    const textarea = document.querySelector('textarea')
-                    if (textarea) {
-                      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-                      nativeInputValueSetter?.call(textarea, s)
-                      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-                    }
-                  }}
-                >{s}</button>
-              ))}
-            </div>
+          <div className="text-center py-6">
+            <div className="text-4xl mb-2">🚗</div>
+            <p className="text-sm font-semibold text-gray-800 mb-1">Where are you headed?</p>
+            <p className="text-xs text-gray-500">Describe your trip and I&apos;ll plan everything — stops, hotels, and activities.</p>
           </div>
         )}
 
         {messages.map(m => (
           <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+            <div className={`max-w-[90%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed ${
               m.role === 'user'
                 ? 'bg-blue-600 text-white rounded-br-sm'
-                : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                : 'bg-gray-100/80 text-gray-800 rounded-bl-sm'
             }`}>
               {m.role === 'assistant' && (
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="text-xs font-medium text-gray-500">Claude</span>
-                </div>
+                <p className="text-xs font-medium text-gray-400 mb-1">AI Assistant</p>
               )}
               <p className="whitespace-pre-wrap">{m.content}</p>
             </div>
@@ -72,11 +88,9 @@ export default function ChatPanel({ messages, input, isLoading, onInputChange, o
 
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Spinner size="sm" />
-                <span className="text-sm text-gray-500">Planning your trip...</span>
-              </div>
+            <div className="bg-gray-100/80 rounded-2xl rounded-bl-sm px-3 py-2.5 flex items-center gap-2">
+              <Spinner size="sm" />
+              <span className="text-xs text-gray-500">Planning your trip...</span>
             </div>
           </div>
         )}
@@ -84,14 +98,14 @@ export default function ChatPanel({ messages, input, isLoading, onInputChange, o
       </div>
 
       {/* Input */}
-      <form onSubmit={onSubmit} className="p-4 border-t border-gray-100">
+      <form onSubmit={onSubmit} className="p-3 border-t border-gray-100/80 bg-white/50">
         <div className="flex gap-2 items-end">
           <textarea
             value={input}
             onChange={onInputChange}
             placeholder="Where do you want to go?"
             rows={2}
-            className="flex-1 resize-none rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="flex-1 resize-none rounded-xl border border-gray-200 bg-white/80 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -102,12 +116,11 @@ export default function ChatPanel({ messages, input, isLoading, onInputChange, o
           <button
             type="submit"
             disabled={isLoading || !input.trim()}
-            className="px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-40 transition-colors"
           >
-            Send
+            ↑
           </button>
         </div>
-        <p className="text-xs text-gray-400 mt-1.5">Shift+Enter for new line</p>
       </form>
     </div>
   )
