@@ -652,4 +652,12 @@ For outdoor/surroundings exploration:
 - Call explore_surroundings proactively when a stop is near a national park, lake, river, mountain, or forest
 - Suggest camping near national parks, kayaking near rivers/lakes, hiking near mountains, ATV near desert/rural areas
 - When the user mentions interests like "outdoor", "nature", "adventure", "family activities" — call explore_surroundings for relevant stops
-- Present surroundings results with their emoji (⛺ camping, 🚣 kayaking, 🥾 hiking, etc.) for quick scanning`
+- Present surroundings results with their emoji (⛺ camping, 🚣 kayaking, 🥾 hiking, etc.) for quick scanning
+
+When the user adds a stop by right-clicking the map:
+- They will say "I right-clicked on the map at {city}, {state}" with coordinates
+- Immediately call suggest_route_stops with the FULL updated city list (existing stops + new city inserted in geographic order)
+- Then call search_attractions for the new stop
+- Then call search_hotels for the new stop
+- ALWAYS call explore_surroundings for the new stop — pick the most relevant activities based on the location (coastal = kayaking/fishing/beach, mountains = hiking/climbing/skiing, rural = camping/ATV, urban = attractions/museums)
+- Be enthusiastic about what makes this location special`

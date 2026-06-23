@@ -44,6 +44,7 @@ interface MapViewProps {
   routeGeometry: RouteGeometry | null
   selectedStop: RouteStop | null
   onStopClick: (stop: RouteStop) => void
+  onMapRightClick?: (lat: number, lng: number, x: number, y: number) => void
   confirmedReservations?: ConfirmedReservation[]
   proactivePOIs?: ProactivePOIs
 }

@@ -211,3 +211,32 @@ export function addDays(dateStr: string, days: number): string {
   d.setDate(d.getDate() + days)
   return d.toISOString().split('T')[0]
 }
+
+/**
+ * Reverse geocode lat/lng → { city, state } using Nominatim.
+ * Used for map-click "add stop" — converts click coordinates to a city name the AI can work with.
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<{ city: string; state: string } | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'road-trip-planner/1.0 (road-trip-planner-blush.vercel.app)' },
+      signal: AbortSignal.timeout(4000),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as {
+      address?: {
+        city?: string; town?: string; village?: string; county?: string
+        state?: string; state_code?: string
+      }
+    }
+    const addr = data.address
+    if (!addr) return null
+    const city = addr.city ?? addr.town ?? addr.village ?? addr.county
+    const stateCode = STATE_NAME_TO_CODE[addr.state ?? ''] ?? addr.state_code?.toUpperCase()
+    if (!city || !stateCode) return null
+    return { city, state: stateCode }
+  } catch {
+    return null
+  }
+}

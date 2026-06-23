@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, useMap, useMapEvents } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
 import type { RouteStop, Attraction, Hotel, RouteGeometry, ConfirmedReservation } from '@/types'
@@ -165,6 +165,60 @@ function clusterIconCreate(cluster: { getChildCount: () => number }) {
   })
 }
 
+// ─── Provisional stop icon (pulsing pin shown while AI processes a map click) ──
+
+let _provisionalIcon: L.DivIcon | null = null
+function getProvisionalIcon(): L.DivIcon {
+  if (_provisionalIcon) return _provisionalIcon
+  _provisionalIcon = L.divIcon({
+    className: '',
+    html: `<div style="
+      width:38px;height:44px;position:relative;
+    ">
+      <div style="
+        width:38px;height:38px;border-radius:50%;
+        background:#6b7280;color:white;
+        display:flex;align-items:center;justify-content:center;
+        font-size:20px;border:3px solid white;
+        box-shadow:0 2px 10px rgba(0,0,0,0.35);
+        animation:rtp-provisional-pulse 1s ease-in-out infinite alternate;
+      ">📍</div>
+      <div style="
+        position:absolute;bottom:0;left:50%;transform:translateX(-50%);
+        background:#6b7280;color:white;font-size:9px;font-weight:700;
+        padding:1px 5px;border-radius:4px;white-space:nowrap;
+      ">Adding…</div>
+    </div>
+    <style>
+      @keyframes rtp-provisional-pulse{from{transform:scale(0.95);opacity:0.75}to{transform:scale(1.05);opacity:1}}
+    </style>`,
+    iconSize: [38, 44],
+    iconAnchor: [19, 44],
+  })
+  return _provisionalIcon
+}
+
+// ─── MapContextMenuHandler: right-click to add a stop (TREK MapView.tsx pattern) ─
+// Uses contextmenu (right-click) so it doesn't conflict with normal map panning.
+// Passes screen coords (clientX/Y) for positioning the popup in the parent.
+
+function MapContextMenuHandler({
+  onContextMenu,
+}: {
+  onContextMenu: (lat: number, lng: number, x: number, y: number) => void
+}) {
+  const map = useMap()
+  useEffect(() => {
+    const handler = (e: L.LeafletMouseEvent) => {
+      e.originalEvent.preventDefault()
+      onContextMenu(e.latlng.lat, e.latlng.lng, e.originalEvent.clientX, e.originalEvent.clientY)
+    }
+    map.on('contextmenu', handler)
+    return () => { map.off('contextmenu', handler) }
+  }, [map, onContextMenu])
+  return null
+}
+
 // ─── BoundsUpdater: fits map to route or stops ─────────────────────────────
 
 function BoundsUpdater({ stops, routeGeometry }: { stops: RouteStop[]; routeGeometry: RouteGeometry | null }) {
@@ -299,13 +353,14 @@ interface LeafletMapProps {
   routeGeometry: RouteGeometry | null
   selectedStop: RouteStop | null
   onStopClick: (stop: RouteStop) => void
+  onMapRightClick?: (lat: number, lng: number, x: number, y: number) => void
   confirmedReservations?: ConfirmedReservation[]
   proactivePOIs?: ProactivePOIs
 }
 
 export default function LeafletMap({
   stops, attractions, surroundings, hotels, routeGeometry, selectedStop, onStopClick,
-  confirmedReservations = [], proactivePOIs,
+  onMapRightClick, confirmedReservations = [], proactivePOIs,
 }: LeafletMapProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [segmentCard, setSegmentCard] = useState<{ info: SegmentInfo; x: number; y: number } | null>(null)
@@ -382,6 +437,7 @@ export default function LeafletMap({
 
         <BoundsUpdater stops={stops} routeGeometry={routeGeometry} />
         <MapControlsPill />
+        {onMapRightClick && <MapContextMenuHandler onContextMenu={onMapRightClick} />}
 
         {/* ── Route geometry ── */}
         {routeGeometry && routeGeometry.length > 1 && (
@@ -409,9 +465,9 @@ export default function LeafletMap({
         {/* ── Stop markers ── */}
         {stops.map((stop, i) => (
           <Marker
-            key={stop.city}
+            key={stop.city + String(stop.isProvisional)}
             position={[stop.coordinates.lat, stop.coordinates.lng]}
-            icon={createStopIcon(i, selectedStop?.city === stop.city, i === 0, i === stops.length - 1)}
+            icon={stop.isProvisional ? getProvisionalIcon() : createStopIcon(i, selectedStop?.city === stop.city, i === 0, i === stops.length - 1)}
             eventHandlers={{
               click: () => { hideTooltip(); onStopClick(stop) },
               mouseover: (e: L.LeafletMouseEvent) =>

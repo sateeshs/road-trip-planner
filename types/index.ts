@@ -16,6 +16,7 @@ export interface RouteStop {
   stayNights: number
   checkIn: string   // ISO date
   checkOut: string  // ISO date
+  isProvisional?: boolean           // true while AI is processing a map-click stop
 }
 
 /** Full driving route geometry from ORS — [lat, lng] pairs ready for Leaflet */
