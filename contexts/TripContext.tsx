@@ -7,6 +7,7 @@ import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, Confirmed
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 import { reverseGeocode } from '@/lib/route-utils'
+import { optimizeRoute } from '@/lib/route-optimizer'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import type { Message } from 'ai'
 
@@ -79,6 +80,8 @@ export interface TripContextValue {
   handleConfirmBooking: (summary: BookingSummary) => void
   handleCancelReservation: (id: string) => void
   handleReservationStatusChange: (id: string, status: ConfirmedReservation['status']) => void
+  handleOptimizeRoute: () => void
+  isOptimizing: boolean
 }
 
 // ─── Context ────────────────────────────────────────────────────────────────
@@ -113,6 +116,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [itineraryOpen, setItineraryOpen] = useState(false)
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [mapMenu, setMapMenu] = useState<MapMenu | null>(null)
+  const [isOptimizing, setIsOptimizing] = useState(false)
 
   // ── Proactive POIs ──
   const proactivePois = useProactivePlaces(stops)
@@ -278,6 +282,39 @@ export function TripProvider({ children }: { children: ReactNode }) {
     setItineraryOpen(true)
   }, [selectedStop])
 
+  const handleOptimizeRoute = useCallback(() => {
+    if (stops.length < 4) return  // need at least origin + 2 intermediates + destination to be worth optimizing
+    const origin = stops[0]
+    const destination = stops[stops.length - 1]
+    const intermediates = stops.slice(1, -1)
+
+    // Reorder intermediates using nearest-neighbor + 2-opt (TREK RouteCalculator pattern)
+    const optimized = optimizeRoute(
+      intermediates.map(s => ({ ...s, lat: s.coordinates.lat, lng: s.coordinates.lng })),
+      {
+        start: { lat: origin.coordinates.lat, lng: origin.coordinates.lng },
+        end: { lat: destination.coordinates.lat, lng: destination.coordinates.lng },
+      }
+    )
+
+    // Check if order actually changed
+    const same = optimized.every((s, i) => s.city === intermediates[i].city)
+    if (same) return
+
+    // Build new ordered city list and re-run the full AI route planning
+    const reorderedCities = [
+      `${origin.city}, ${origin.state}`,
+      ...optimized.map(s => `${s.city}, ${s.state}`),
+      `${destination.city}, ${destination.state}`,
+    ]
+
+    setIsOptimizing(true)
+    append({
+      role: 'user',
+      content: `Optimize my route — I've reordered the stops to minimize driving. Please recalculate the itinerary in this order: ${reorderedCities.join(' → ')}`,
+    }).finally(() => setIsOptimizing(false))
+  }, [stops, append])
+
   const handleCancelReservation = useCallback((id: string) => {
     setConfirmedReservations(prev => prev.filter(r => r.id !== id))
   }, [])
@@ -324,6 +361,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
     handleConfirmBooking,
     handleCancelReservation,
     handleReservationStatusChange,
+    handleOptimizeRoute,
+    isOptimizing,
   }
 
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>

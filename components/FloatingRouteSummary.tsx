@@ -1,5 +1,6 @@
 'use client'
 import type { RouteStop } from '@/types'
+import { useTripContext } from '@/contexts/TripContext'
 
 interface FloatingRouteSummaryProps {
   stops: RouteStop[]
@@ -12,10 +13,13 @@ interface FloatingRouteSummaryProps {
 export default function FloatingRouteSummary({
   stops, totalDistance, totalDuration, bookingCount = 0, onItineraryClick,
 }: FloatingRouteSummaryProps) {
+  const { handleOptimizeRoute, isOptimizing, isLoading } = useTripContext()
+
   if (stops.length < 2) return null
   const origin = stops[0].city
   const dest = stops[stops.length - 1].city
   const midStops = stops.slice(1, -1)
+  const canOptimize = stops.length >= 4  // need ≥2 intermediate stops
 
   return (
     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2">
@@ -40,7 +44,24 @@ export default function FloatingRouteSummary({
         )}
       </div>
 
-      {/* Itinerary button — shows booking count badge (ported from TREK reservations indicator) */}
+      {/* Optimize button — only shown when ≥2 intermediate stops exist */}
+      {canOptimize && (
+        <button
+          onClick={handleOptimizeRoute}
+          disabled={isOptimizing || isLoading}
+          title="Reorder stops to minimize total driving distance (nearest-neighbor + 2-opt)"
+          className="flex items-center gap-1.5 bg-white/90 backdrop-blur-md border border-white/50 shadow-lg rounded-full px-3 py-2 text-sm font-semibold text-purple-700 hover:bg-purple-50 hover:text-purple-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {isOptimizing ? (
+            <span className="w-3.5 h-3.5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <span>✦</span>
+          )}
+          <span className="hidden sm:inline">Optimize</span>
+        </button>
+      )}
+
+      {/* Itinerary button — shows booking count badge */}
       {onItineraryClick && (
         <button
           onClick={onItineraryClick}
