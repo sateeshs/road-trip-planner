@@ -137,6 +137,15 @@ function fromTable(name: string): CityInfo | null {
   return entry ? entry[1] : null
 }
 
+// Nominatim rate-limit throttle — enforces 1.1s minimum between requests (ported from TREK atlasService.ts)
+let lastNominatimCall = 0
+async function throttleNominatim(): Promise<void> {
+  const now = Date.now()
+  const wait = 1100 - (now - lastNominatimCall)
+  if (wait > 0) await new Promise(r => setTimeout(r, wait))
+  lastNominatimCall = Date.now()
+}
+
 interface NominatimResult {
   lat: string
   lon: string
@@ -152,7 +161,8 @@ interface NominatimResult {
  * Returns up to 3 US results with structured address details.
  */
 async function nominatimSearch(q: string): Promise<NominatimResult[]> {
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=3&countrycodes=us&addressdetails=1`
+  await throttleNominatim()
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&countrycodes=us&addressdetails=1`
   const res = await fetch(url, {
     headers: { 'User-Agent': 'road-trip-planner/1.0 (road-trip-planner-blush.vercel.app)' },
     signal: AbortSignal.timeout(5000),
