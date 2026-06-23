@@ -3,6 +3,8 @@
 // Docs: https://openrouteservice.org/dev/#/api-docs/v2/directions/{profile}/geojson/post
 
 const ORS_BASE = 'https://api.openrouteservice.org'
+const APP_NAME = process.env.ORS_APP_NAME ?? 'road-trip-planner'
+const APP_VERSION = '1.0'
 
 export interface ORSSegment {
   distance: number  // meters
@@ -38,6 +40,10 @@ export async function getRoute(
       Authorization: process.env.OPENROUTESERVICE_API_KEY!,
       'Content-Type': 'application/json',
       Accept: 'application/json, application/geo+json',
+      // ORS logs requests by User-Agent — visible in your ORS dashboard under API usage
+      'User-Agent': `${APP_NAME}/${APP_VERSION}`,
+      // ORS-specific header for app attribution (shown in their developer portal logs)
+      'X-Application-Name': APP_NAME,
     },
     body: JSON.stringify({ coordinates }),
   })
