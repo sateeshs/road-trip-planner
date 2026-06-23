@@ -83,6 +83,8 @@ const US_MAJOR_CITIES: Record<string, CityInfo> = {
   'Mackinac City': { lat: 45.7775, lng: -84.7275, state: 'MI' },
   'Mackinaw City': { lat: 45.7775, lng: -84.7275, state: 'MI' },
   'Sault Ste. Marie': { lat: 46.4953, lng: -84.3453, state: 'MI' },
+  'Soo Locks': { lat: 46.5015, lng: -84.3562, state: 'MI' },   // Soo Locks boat tours, St. Mary's River
+  'Sault Saint Marie': { lat: 46.4953, lng: -84.3453, state: 'MI' },
   'Petoskey': { lat: 45.3737, lng: -84.9553, state: 'MI' },
   'Cadillac': { lat: 44.2520, lng: -85.4011, state: 'MI' },
   'Bay City': { lat: 43.5945, lng: -83.8888, state: 'MI' },
@@ -135,10 +137,53 @@ function fromTable(name: string): CityInfo | null {
   return entry ? entry[1] : null
 }
 
+interface NominatimResult {
+  lat: string
+  lon: string
+  display_name: string
+  address?: {
+    city?: string; town?: string; village?: string; county?: string
+    state?: string; state_code?: string; country_code?: string
+  }
+}
+
 /**
- * Resolve a city name to coordinates.
- * Tries the hardcoded table first, then Nominatim geocoding.
- * Returns null only if both fail.
+ * Query Nominatim with a given search string.
+ * Returns up to 3 US results with structured address details.
+ */
+async function nominatimSearch(q: string): Promise<NominatimResult[]> {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=3&countrycodes=us&addressdetails=1`
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'road-trip-planner/1.0 (road-trip-planner-blush.vercel.app)' },
+    signal: AbortSignal.timeout(5000),
+  })
+  if (!res.ok) return []
+  return res.json() as Promise<NominatimResult[]>
+}
+
+/**
+ * Pick the best result from a Nominatim response.
+ * Prefers results whose state matches the expected state code.
+ */
+function pickBestResult(results: NominatimResult[], preferredState: string | null): NominatimResult | null {
+  if (!results.length) return null
+  if (!preferredState) return results[0]
+  // Try to find a result matching the preferred state
+  const match = results.find(r => {
+    const code = r.address?.state_code?.toUpperCase()
+      ?? STATE_NAME_TO_CODE[r.address?.state ?? '']
+    return code === preferredState
+  })
+  return match ?? results[0]
+}
+
+/**
+ * Resolve a city/landmark name to coordinates.
+ * 1. Hardcoded table (instant, no network — covers ~100 US cities + landmarks)
+ * 2. In-memory cache from previous Nominatim calls
+ * 3. Nominatim with state-qualified query (e.g. "Soo Locks, Michigan, United States")
+ * 4. Retry Nominatim without state if step 3 returns no results
+ *    — handles landmarks, national parks, small towns that Nominatim knows by name alone
  */
 export async function resolveCityCoords(city: string): Promise<CityInfo | null> {
   const stateCode = extractState(city)
@@ -148,37 +193,40 @@ export async function resolveCityCoords(city: string): Promise<CityInfo | null> 
   const tableHit = fromTable(name)
   if (tableHit) return tableHit
 
-  // 2. In-memory cache from previous Nominatim calls
-  const cacheKey = (stateCode ? `${name},${stateCode}` : name).toLowerCase()
+  // 2. In-memory cache
+  const cacheKey = (stateCode ? `${name}|${stateCode}` : name).toLowerCase()
   if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey)!
 
-  // 3. Nominatim geocoding — include state in query when available to avoid wrong-state matches
   try {
-    const queryStr = stateCode
-      ? `${name}, ${STATE_CODE_TO_NAME[stateCode] ?? stateCode}, United States`
-      : `${name}, United States`
-    const q = encodeURIComponent(queryStr)
-    const url = `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=us`
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'road-trip-planner/1.0 (road-trip-planner-blush.vercel.app)' },
-      signal: AbortSignal.timeout(3000),
-    })
-    if (!res.ok) return null
-    const data = await res.json() as Array<{
-      lat: string; lon: string; display_name: string; address?: { state?: string; state_code?: string }
-    }>
-    if (!data.length) return null
-
-    const hit = data[0]
-    // Extract state abbreviation from display_name or address
-    const stateMatch = hit.display_name.match(/,\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*(?:\d{5},\s*)?United States/)
-    const resolvedState = stateCode ?? STATE_NAME_TO_CODE[stateMatch?.[1] ?? ''] ?? '??'
-
-    const info: CityInfo = {
-      lat: parseFloat(hit.lat),
-      lng: parseFloat(hit.lon),
-      state: resolvedState,
+    // 3. Nominatim — try with state first for precision
+    let results: NominatimResult[] = []
+    if (stateCode) {
+      const stateName = STATE_CODE_TO_NAME[stateCode] ?? stateCode
+      results = await nominatimSearch(`${name}, ${stateName}, United States`)
     }
+
+    // 4. Retry without state if no results (catches landmarks, parks, locks, etc.)
+    if (!results.length) {
+      results = await nominatimSearch(`${name}, United States`)
+    }
+
+    const hit = pickBestResult(results, stateCode)
+    if (!hit) return null
+
+    // Extract state from structured addressdetails (reliable) or display_name (fallback)
+    const rawStateCode = hit.address?.state_code?.toUpperCase()
+    const rawStateName = hit.address?.state
+    const resolvedState =
+      stateCode ??
+      rawStateCode ??
+      STATE_NAME_TO_CODE[rawStateName ?? ''] ??
+      (() => {
+        // Last resort: parse state from display_name
+        const m = hit.display_name.match(/,\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*),\s*(?:\d{5},\s*)?United States/)
+        return STATE_NAME_TO_CODE[m?.[1] ?? ''] ?? '??'
+      })()
+
+    const info: CityInfo = { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon), state: resolvedState }
     geocodeCache.set(cacheKey, info)
     return info
   } catch {
