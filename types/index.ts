@@ -13,6 +13,8 @@ export interface RouteStop {
   coordinates: { lat: number; lng: number }
   driveTimeFromPrevious?: string    // e.g. "2h 35m" — from ORS real road data
   driveDistanceFromPrevious?: string // e.g. "145 miles" — from ORS real road data
+  roadName?: string                  // e.g. "I-65 S · US-31 N" — dominant highway on leg
+  hasToll?: boolean                  // true if leg passes through a toll road
   stayNights: number
   checkIn: string   // ISO date
   checkOut: string  // ISO date

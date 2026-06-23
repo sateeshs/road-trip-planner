@@ -297,6 +297,8 @@ interface SegmentInfo {
   to: string
   driveTime?: string
   driveDistance?: string
+  roadName?: string
+  hasToll?: boolean
   midPoint: [number, number]
 }
 
@@ -408,6 +410,8 @@ export default function LeafletMap({
             to: `${stops[i + 1].city}, ${stops[i + 1].state}`,
             driveTime: stops[i + 1].driveTimeFromPrevious,
             driveDistance: stops[i + 1].driveDistanceFromPrevious,
+            roadName: stops[i + 1].roadName,
+            hasToll: stops[i + 1].hasToll,
             midPoint: mid,
           },
         })
@@ -476,7 +480,9 @@ export default function LeafletMap({
                   e.originalEvent.clientY,
                   `${stop.city}, ${stop.state}`,
                   stop.stayNights > 0 ? `${stop.stayNights} night${stop.stayNights !== 1 ? 's' : ''} · ${stop.checkIn}` : i === 0 ? 'Starting point' : undefined,
-                  stop.driveTimeFromPrevious ? `🚗 ${stop.driveTimeFromPrevious} · ${stop.driveDistanceFromPrevious}` : undefined,
+                  stop.driveTimeFromPrevious
+                    ? `🚗 ${stop.driveTimeFromPrevious} · ${stop.driveDistanceFromPrevious}${stop.roadName ? ' · ' + stop.roadName : ''}${stop.hasToll ? ' · ⚠️ Toll' : ''}`
+                    : undefined,
                 ),
               mousemove: (e: L.LeafletMouseEvent) =>
                 showTooltip(
@@ -484,7 +490,9 @@ export default function LeafletMap({
                   e.originalEvent.clientY,
                   `${stop.city}, ${stop.state}`,
                   stop.stayNights > 0 ? `${stop.stayNights} night${stop.stayNights !== 1 ? 's' : ''} · ${stop.checkIn}` : i === 0 ? 'Starting point' : undefined,
-                  stop.driveTimeFromPrevious ? `🚗 ${stop.driveTimeFromPrevious} · ${stop.driveDistanceFromPrevious}` : undefined,
+                  stop.driveTimeFromPrevious
+                    ? `🚗 ${stop.driveTimeFromPrevious} · ${stop.driveDistanceFromPrevious}${stop.roadName ? ' · ' + stop.roadName : ''}${stop.hasToll ? ' · ⚠️ Toll' : ''}`
+                    : undefined,
                 ),
               mouseout: hideTooltip,
             }}
@@ -633,6 +641,32 @@ export default function LeafletMap({
             }}
           />
         ))}
+        {proactivePOIs?.restrooms.map(p => (
+          <CircleMarker
+            key={p.id}
+            center={[p.coordinates.lat, p.coordinates.lng]}
+            radius={5}
+            pathOptions={{ color: '#0369a1', fillColor: '#bae6fd', fillOpacity: 0.9, weight: 1.5 }}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Rest Area', 'Restrooms / Rest Stop'),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Rest Area', 'Restrooms / Rest Stop'),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
+        {proactivePOIs?.campgrounds.map(p => (
+          <CircleMarker
+            key={p.id}
+            center={[p.coordinates.lat, p.coordinates.lng]}
+            radius={5}
+            pathOptions={{ color: '#15803d', fillColor: '#bbf7d0', fillOpacity: 0.9, weight: 1.5 }}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Campground', p.category),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Campground', p.category),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
       </MapContainer>
 
       {/* ── Hover tooltip overlay (fixed-position div, ported from TREK TooltipOverlay) ── */}
@@ -689,6 +723,34 @@ export default function LeafletMap({
           <div style={{ fontWeight: 700, fontSize: 12.5, color: '#111827', lineHeight: 1.4 }}>
             {segmentCard.info.to}
           </div>
+          {segmentCard.info.roadName && (
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <div style={{
+                background: '#1d4ed8', color: 'white', fontSize: 10, fontWeight: 700,
+                padding: '2px 7px', borderRadius: 4, letterSpacing: 0.2,
+              }}>
+                Via {segmentCard.info.roadName}
+              </div>
+              {segmentCard.info.hasToll && (
+                <div style={{
+                  background: '#fef3c7', color: '#92400e', fontSize: 10, fontWeight: 700,
+                  padding: '2px 7px', borderRadius: 4, border: '1px solid #fcd34d',
+                }}>
+                  ⚠️ Toll road
+                </div>
+              )}
+            </div>
+          )}
+          {!segmentCard.info.roadName && segmentCard.info.hasToll && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{
+                background: '#fef3c7', color: '#92400e', fontSize: 10, fontWeight: 700,
+                padding: '2px 7px', borderRadius: 4, border: '1px solid #fcd34d', display: 'inline-block',
+              }}>
+                ⚠️ Toll road
+              </div>
+            </div>
+          )}
           {(segmentCard.info.driveTime || segmentCard.info.driveDistance) && (
             <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #f3f4f6', display: 'flex', gap: 10 }}>
               {segmentCard.info.driveTime && (

@@ -20,7 +20,7 @@ export const ATTRACTION_CATEGORIES = {
 export const SURROUNDINGS_CATEGORIES = {
   // Outdoor activities
   camping:       '16026',          // Campgrounds
-  kayaking:      '18008',          // Kayak / Canoe
+  kayaking:      '18008',          // Kayak / Canoe rentals
   hiking:        '16032,16017',    // Parks + Trails
   cycling:       '18001',          // Bike Trails / Rentals
   atv_rides:     '18002',          // Off-road / ATV
@@ -32,6 +32,11 @@ export const SURROUNDINGS_CATEGORIES = {
   // Water activities
   rafting:       '18008,18014',    // Rafting / River activities
   boating:       '18004',          // Boat rentals / marinas
+  cruise:        '18004,16000',    // Boat tours, harbor/lake cruises
+  boat_tour:     '18004,16000',    // Guided boat tours, sightseeing cruises
+  // Adventure
+  zip_line:      '16000',          // Zip lines / canopy tours
+  scenic_ride:   '16000,10000',    // Scenic train/gondola/tram rides
   // Scenic
   scenic_views:  '16017',          // Lookouts / scenic viewpoints
   nature_reserve:'16032',          // Nature reserves / wildlife areas
@@ -58,6 +63,10 @@ export const SURROUNDINGS_OPTIONS: Array<{
   { key: 'swimming',      label: 'Swimming',         emoji: '🏊', description: 'Swimming holes & lakes' },
   { key: 'rafting',       label: 'Rafting',          emoji: '🌊', description: 'River rafting & tubing' },
   { key: 'boating',       label: 'Boating',          emoji: '⛵', description: 'Boat rentals & marinas' },
+  { key: 'cruise',        label: 'Cruise / Harbor Tour', emoji: '🚢', description: 'Harbor & lake cruises, boat tours' },
+  { key: 'boat_tour',     label: 'Boat Tour',        emoji: '🛥️', description: 'Guided sightseeing boat tours' },
+  { key: 'zip_line',      label: 'Zip Line',         emoji: '🪂', description: 'Zip lines & canopy tours' },
+  { key: 'scenic_ride',   label: 'Scenic Ride',      emoji: '🚂', description: 'Scenic train, gondola & tram rides' },
   { key: 'scenic_views',  label: 'Scenic Views',     emoji: '🏔️', description: 'Lookouts & viewpoints' },
   { key: 'skiing',        label: 'Skiing',           emoji: '⛷️', description: 'Ski resorts & slopes' },
   { key: 'waterfalls',    label: 'Waterfalls',       emoji: '💦', description: 'Waterfall hikes & parks' },

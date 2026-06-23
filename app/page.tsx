@@ -148,6 +148,23 @@ export default function HomePage() {
     })
   }
 
+  async function handleRemoveStop(stop: RouteStop) {
+    const updatedStops = stops.filter(s => s.city !== stop.city)
+    setStops(updatedStops)
+    // Clear per-city data for the removed stop
+    setHotelsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
+    setAttractionsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
+    setSelectedStop(null)
+    setSurroundings([])
+    if (updatedStops.length >= 2) {
+      const cityList = updatedStops.map(s => `${s.city}, ${s.state}`).join(' → ')
+      await append({
+        role: 'user',
+        content: `Remove ${stop.city}, ${stop.state} from the route and recalculate. Updated stops: ${cityList}`,
+      })
+    }
+  }
+
   function handleConfirmBooking(summary: BookingSummary) {
     if (!selectedStop) return
     const reservation: ConfirmedReservation = {
@@ -201,7 +218,8 @@ export default function HomePage() {
 
       {/* Map legend (bottom-right, above zoom controls) */}
       {(allAttractions.length > 0 || allHotels.length > 0 || surroundings.length > 0 || confirmedReservations.length > 0 ||
-        proactivePois.gasStations.length > 0 || proactivePois.restaurants.length > 0 || proactivePois.attractions.length > 0) && (
+        proactivePois.gasStations.length > 0 || proactivePois.restaurants.length > 0 || proactivePois.attractions.length > 0 ||
+        proactivePois.restrooms.length > 0 || proactivePois.campgrounds.length > 0) && (
         <div className="absolute bottom-52 right-4 z-[1000] bg-white/90 backdrop-blur-md rounded-xl px-3 py-2 shadow-lg border border-white/50 text-xs space-y-1">
           {confirmedReservations.length > 0 && <div className="flex items-center gap-1.5"><span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px]">✓</span> Booked</div>}
           {allHotels.length > 0 && <div className="flex items-center gap-1.5"><span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px]">H</span> Hotels</div>}
@@ -210,6 +228,8 @@ export default function HomePage() {
           {proactivePois.gasStations.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-gray-300 border border-gray-500 inline-block" /> Gas</div>}
           {proactivePois.restaurants.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-orange-200 border border-orange-600 inline-block" /> Food</div>}
           {proactivePois.attractions.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-violet-200 border border-violet-600 inline-block" /> POIs</div>}
+          {proactivePois.restrooms.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-sky-200 border border-sky-600 inline-block" /> Restrooms</div>}
+          {proactivePois.campgrounds.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-200 border border-green-700 inline-block" /> Camping</div>}
         </div>
       )}
 
@@ -284,7 +304,9 @@ export default function HomePage() {
         attractions={selectedStop ? (attractionsByCity[selectedStop.city] ?? []) : []}
         surroundings={surroundings}
         isSurroundingsLoading={isSurroundingsLoading}
+        isRemovable={selectedStop ? (() => { const idx = stops.findIndex(s => s.city === selectedStop.city); return stops.length > 2 && idx > 0 && idx < stops.length - 1 })() : false}
         onClose={() => { setSelectedStop(null); setSurroundings([]) }}
+        onRemoveStop={handleRemoveStop}
         onSelectHotel={(hotel: Hotel, offer: HotelOffer) => {
           setBookingSummary({
             hotelId: hotel.hotelId,

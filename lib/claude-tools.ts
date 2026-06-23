@@ -335,7 +335,7 @@ export const agentTools = {
         const checkIn = addDays(startDate, nightsBefore)
         const checkOut = addDays(startDate, nightsBefore + stayNights)
 
-        // Per-segment distance/time from ORS segments array
+        // Per-segment distance/time/highway from OSRM segments array
         const seg = orsResult?.segments[i - 1]
         return {
           city: wp.city,
@@ -343,6 +343,8 @@ export const agentTools = {
           coordinates: { lat: wp.lat, lng: wp.lng },
           driveTimeFromPrevious: seg ? secondsToTime(seg.duration) : undefined,
           driveDistanceFromPrevious: seg ? metersToMiles(seg.distance) : undefined,
+          roadName: seg?.roadName,
+          hasToll: seg?.hasToll,
           stayNights,
           checkIn,
           checkOut,
@@ -473,9 +475,10 @@ export const agentTools = {
 
   explore_surroundings: tool({
     description:
-      'Search for outdoor activities and surroundings near a road trip stop — camping, kayaking, hiking, ATV rides, fishing, rafting, boating, rock climbing, horseback riding, and more. ' +
+      'Search for outdoor activities and surroundings near a road trip stop — camping, kayaking, boat tours, harbor cruises, hiking, zip lines, scenic train/gondola rides, ATV rides, fishing, rafting, boating, rock climbing, horseback riding, and more. ' +
       'Call this when the user asks about outdoor activities, adventures, or things to do in nature near a stop. ' +
-      'Also call proactively when a stop is near a national park, lake, river, or mountain area.',
+      'Also call proactively when a stop is near a national park, lake, river, coast, harbor, or mountain area. ' +
+      'Use cruise/boat_tour for cities with harbors, bays, or large lakes. Use zip_line/scenic_ride for mountain towns and resorts.',
     parameters: z.object({
       city: z.string().describe('City name of the road trip stop'),
       state: z.string().describe('State abbreviation, e.g. "TN"'),
@@ -483,10 +486,11 @@ export const agentTools = {
         .array(z.enum([
           'camping', 'kayaking', 'hiking', 'cycling', 'atv_rides',
           'horseback', 'rock_climbing', 'fishing', 'swimming',
-          'rafting', 'boating', 'scenic_views', 'skiing', 'waterfalls',
+          'rafting', 'boating', 'cruise', 'boat_tour', 'zip_line',
+          'scenic_ride', 'scenic_views', 'skiing', 'waterfalls',
         ]))
         .min(1)
-        .describe('Activity types to search for. Pick the most relevant ones for the area.'),
+        .describe('Activity types to search for. Pick the most relevant ones for the area. Use cruise/boat_tour for coastal cities, lakes, and rivers. Use zip_line and scenic_ride for mountain/resort areas.'),
       limit: z.number().min(1).max(12).default(8),
     }),
     execute: async ({ city, state, activities, limit }) => {
@@ -514,12 +518,16 @@ export const agentTools = {
         if (!coords) return { surroundings: [], city, activities }
         const { lat, lng } = coords
         const r = 30000  // 30 km radius for outdoor activities
-        const ql = `[out:json][timeout:10];
+        const ql = `[out:json][timeout:15];
 (
-  node["leisure"~"park|nature_reserve|marina|swimming_pool|golf_course"](around:${r},${lat},${lng});
-  node["sport"~"hiking|cycling|kayak|canoe|climbing|fishing|skiing|swimming|rafting"](around:${r},${lat},${lng});
+  node["leisure"~"park|nature_reserve|marina|swimming_pool|golf_course|water_park"](around:${r},${lat},${lng});
+  node["sport"~"hiking|cycling|kayak|kayaking|canoe|canoeing|climbing|fishing|skiing|swimming|rafting|sailing|windsurfing|rowing"](around:${r},${lat},${lng});
   node["tourism"~"camp_site|caravan_site"](around:${r},${lat},${lng});
-  node["natural"~"waterfall|beach|peak|hot_spring"](around:${r},${lat},${lng});
+  node["leisure"="camp_site"](around:${r},${lat},${lng});
+  node["tourism"="boat_tour"](around:${r},${lat},${lng});
+  node["amenity"~"boat_rental"](around:${r},${lat},${lng});
+  node["natural"~"waterfall|beach|peak|hot_spring|cave_entrance"](around:${r},${lat},${lng});
+  node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift|waterfall"](around:${r},${lat},${lng});
 );
 out ${limit * 2};`
         const elements = await overpassQuery(ql)
@@ -533,18 +541,30 @@ out ${limit * 2};`
           if (!elLat || !elLng || !name || seen.has(name)) continue
           seen.add(name)
           const cat =
-            tags.tourism === 'camp_site' ? 'Campground' :
+            tags.amenity === 'boat_rental' ? 'Boat / Kayak Rental' :
+            tags.tourism === 'boat_tour' ? 'Boat Tour' :
+            tags.tourism === 'camp_site' || tags.leisure === 'camp_site' ? 'Campground' :
             tags.tourism === 'caravan_site' ? 'RV Park' :
+            tags.attraction === 'boat_tour' ? 'Boat Tour' :
+            tags.attraction === 'scenic_railway' ? 'Scenic Train Ride' :
+            tags.attraction === 'zip_line' ? 'Zip Line' :
+            tags.attraction === 'gondola_lift' || tags.attraction === 'chair_lift' ? 'Scenic Gondola / Tram' :
+            tags.attraction === 'waterfall' ? 'Waterfall' :
             tags.natural === 'waterfall' ? 'Waterfall' :
             tags.natural === 'beach' ? 'Beach' :
             tags.natural === 'peak' ? 'Mountain Peak' :
             tags.natural === 'hot_spring' ? 'Hot Spring' :
-            tags.sport === 'kayak' || tags.sport === 'canoe' ? 'Kayaking' :
+            tags.natural === 'cave_entrance' ? 'Cave' :
+            tags.sport === 'kayak' || tags.sport === 'kayaking' || tags.sport === 'canoe' || tags.sport === 'canoeing' ? 'Kayaking & Canoeing' :
+            tags.sport === 'sailing' || tags.sport === 'rowing' || tags.sport === 'windsurfing' ? 'Water Sports' :
             tags.sport === 'climbing' ? 'Rock Climbing' :
             tags.sport === 'rafting' ? 'Rafting' :
+            tags.sport === 'fishing' ? 'Fishing' :
+            tags.sport === 'skiing' ? 'Skiing' :
             tags.sport ? tags.sport.charAt(0).toUpperCase() + tags.sport.slice(1) :
             tags.leisure === 'nature_reserve' ? 'Nature Reserve' :
             tags.leisure === 'marina' ? 'Marina' :
+            tags.leisure === 'water_park' ? 'Water Park' :
             tags.leisure ? tags.leisure.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) :
             'Outdoor Activity'
           surroundings.push({
@@ -637,27 +657,23 @@ Your personality:
 - Proactive — if a stop seems obvious or famous, suggest it even if the user didn't ask
 - Helpful with logistics — hotel deals, check-in times, route optimization
 
-When planning a trip:
-1. **Plan immediately** — if the user gives you an origin and destination (with or without exact dates), start planning right away. Do not ask clarifying questions upfront. Use sensible defaults: today's date if no date given, 2 adults if not specified, direct route with 1-2 stops for trips under 10 hours.
-2. Decide on a realistic route with 1-3 intermediate stops (aim for 4-6 hour max drive segments per day for families)
-3. Call suggest_route_stops with the COMPLETE ordered city list — this uses OpenStreetMap/OSRM routing (free, no API key). Pass any US city name — the system uses Nominatim geocoding to resolve any city automatically.
-4. For each stop, call search_attractions to find top things to do
-5. Proactively call search_hotels for each stop — find the best deals
-6. When a user wants to book, call check_hotel_availability then build_booking_summary
+TOOL CALL ORDER — always follow this sequence, never skip steps:
+1. **Plan immediately** — user gives origin + destination → start planning, no clarifying questions. Defaults: today's date, 2 adults, direct route with 1-2 stops for trips under 10 hours.
+2. Pick a realistic route with 1-3 intermediate stops (max 4-6 hour drive segments per day).
+3. Call **suggest_route_stops** first.
+4. Call **search_attractions** for every stop.
+5. Call **search_hotels** for every stop.
+6. ONLY AFTER steps 3-5: call **explore_surroundings** for stops near nature (parks, lakes, rivers, coasts, mountains). Geography guide:
+   - Coastal/harbor/bay → cruise, boat_tour, kayaking, fishing, swimming
+   - Lakes/rivers → kayaking, boating, boat_tour, rafting, fishing
+   - Mountains/resorts → hiking, rock_climbing, zip_line, scenic_ride, skiing
+   - National parks/forests → hiking, camping, scenic_views, waterfalls
+   - Desert/rural → atv_rides, horseback, camping, scenic_views
+7. To book: call check_hotel_availability → build_booking_summary.
 
-Always be specific about driving times and distances. Families with kids need bathroom breaks and rest stops — account for that.
-When you suggest a booking, always explain the cancellation policy clearly.
+Be specific about drive times/distances. Families need rest stops. Explain cancellation policies.
+Present surroundings with emoji: ⛺ camping, 🚣 kayaking, 🥾 hiking, 🚢 cruise, 🛥️ boat_tour, 🪂 zip_line, 🚂 scenic_ride.
 
-For outdoor/surroundings exploration:
-- Call explore_surroundings proactively when a stop is near a national park, lake, river, mountain, or forest
-- Suggest camping near national parks, kayaking near rivers/lakes, hiking near mountains, ATV near desert/rural areas
-- When the user mentions interests like "outdoor", "nature", "adventure", "family activities" — call explore_surroundings for relevant stops
-- Present surroundings results with their emoji (⛺ camping, 🚣 kayaking, 🥾 hiking, etc.) for quick scanning
-
-When the user adds a stop by right-clicking the map:
-- They will say "I right-clicked on the map at {city}, {state}" with coordinates
-- Immediately call suggest_route_stops with the FULL updated city list (existing stops + new city inserted in geographic order)
-- Then call search_attractions for the new stop
-- Then call search_hotels for the new stop
-- ALWAYS call explore_surroundings for the new stop — pick the most relevant activities based on the location (coastal = kayaking/fishing/beach, mountains = hiking/climbing/skiing, rural = camping/ATV, urban = attractions/museums)
-- Be enthusiastic about what makes this location special`
+When user right-clicks map ("I right-clicked on the map at {city}, {state}"):
+- Call suggest_route_stops → search_attractions → search_hotels → explore_surroundings (strict order).
+- Be enthusiastic about what makes the location special.`

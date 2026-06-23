@@ -6,6 +6,8 @@ export interface ProactivePOIs {
   gasStations: Attraction[]
   restaurants: Attraction[]
   attractions: Attraction[]
+  restrooms: Attraction[]
+  campgrounds: Attraction[]
 }
 
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter'
@@ -72,7 +74,7 @@ function getMidpoint(stops: RouteStop[]): { lat: number; lng: number } {
   return { lat: stops[mid].coordinates.lat, lng: stops[mid].coordinates.lng }
 }
 
-const EMPTY: ProactivePOIs = { gasStations: [], restaurants: [], attractions: [] }
+const EMPTY: ProactivePOIs = { gasStations: [], restaurants: [], attractions: [], restrooms: [], campgrounds: [] }
 
 export function useProactivePlaces(stops: RouteStop[]): ProactivePOIs {
   const [pois, setPois] = useState<ProactivePOIs>(EMPTY)
@@ -95,14 +97,16 @@ export function useProactivePlaces(stops: RouteStop[]): ProactivePOIs {
 
       const { lat, lng } = getMidpoint(stops)
 
-      const [gasStations, restaurants, attractions] = await Promise.all([
+      const [gasStations, restaurants, attractions, restrooms, campgrounds] = await Promise.all([
         fetchOverpass(lat, lng, '["amenity"="fuel"]', 'Gas Station', controller.signal),
         fetchOverpass(lat, lng, '["amenity"~"restaurant|cafe|fast_food"]', 'Restaurant', controller.signal),
         fetchOverpass(lat, lng, '["tourism"~"attraction|museum|viewpoint|theme_park"]', 'Attraction', controller.signal),
+        fetchOverpass(lat, lng, '["highway"="rest_area"]', 'Rest Area / Restroom', controller.signal),
+        fetchOverpass(lat, lng, '["tourism"~"camp_site|caravan_site"]', 'Campground', controller.signal),
       ])
 
       if (!controller.signal.aborted) {
-        setPois({ gasStations, restaurants, attractions })
+        setPois({ gasStations, restaurants, attractions, restrooms, campgrounds })
       }
     }, 800)
 

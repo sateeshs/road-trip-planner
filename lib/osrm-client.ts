@@ -14,9 +14,23 @@ const OSRM_PRIMARY: Record<string, string> = {
 }
 const OSRM_FALLBACK = 'https://router.project-osrm.org/route/v1/driving'
 
+// ─── OSRM step type (from steps=true response) ──────────────────────────────
+
+interface OsrmStep {
+  name: string          // road name, e.g. "I-65 North"
+  ref?: string          // road ref, e.g. "I 65;US 31" (semicolon-separated)
+  distance: number      // meters on this step
+  duration: number
+  intersections: Array<{
+    classes?: string[]  // e.g. ["toll", "motorway", "restricted"]
+  }>
+}
+
 export interface OsrmSegment {
-  distance: number   // meters
-  duration: number   // seconds
+  distance: number      // meters
+  duration: number      // seconds
+  roadName?: string     // dominant highway/road name, e.g. "I-65 S · US-31 N"
+  hasToll?: boolean     // true if any step on this leg passes through a toll
 }
 
 export interface OsrmRouteResult {
@@ -34,9 +48,59 @@ export interface OsrmRouteResult {
 const routeCache = new Map<string, OsrmRouteResult>()
 const ROUTE_CACHE_MAX = 200
 
+// ─── Road name extraction from OSRM steps ───────────────────────────────────
+
+/**
+ * Given a leg's steps, returns the top 1-2 dominant roads by distance covered
+ * and whether the leg passes through any toll.
+ * Prefers `ref` (e.g. "I 65") over `name` (e.g. "Interstate 65 North") for brevity.
+ */
+function extractLegRoadInfo(steps: OsrmStep[]): { roadName: string | null; hasToll: boolean } {
+  const distByRoad = new Map<string, number>()
+  let hasToll = false
+
+  for (const step of steps) {
+    // Toll detection via intersection classes (OSM-derived)
+    if (step.intersections?.some(i => i.classes?.includes('toll'))) {
+      hasToll = true
+    }
+
+    // Prefer ref (short form), fall back to name
+    const rawRef = step.ref?.split(';')[0]?.trim()
+    const label = rawRef || step.name?.trim()
+    if (!label) continue
+
+    distByRoad.set(label, (distByRoad.get(label) ?? 0) + step.distance)
+  }
+
+  if (distByRoad.size === 0) return { roadName: null, hasToll }
+
+  // Sort by distance descending, keep top 2 major roads
+  const sorted = [...distByRoad.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([road]) => formatRoadRef(road))
+    .filter(Boolean)
+
+  return { roadName: sorted.join(' · ') || null, hasToll }
+}
+
+/** Normalise road ref to display form: "I 65" → "I-65", "US 31" → "US-31" */
+function formatRoadRef(ref: string): string {
+  return ref
+    .replace(/^I\s+(\d+)/i, 'I-$1')
+    .replace(/^US\s+(\d+)/i, 'US-$1')
+    .replace(/^SR\s+(\d+)/i, 'SR-$1')
+    .replace(/^State Route\s+(\d+)/i, 'SR-$1')
+    .replace(/^Highway\s+(\d+)/i, 'Hwy $1')
+    .trim()
+}
+
+// ─── Main route fetch ────────────────────────────────────────────────────────
+
 /**
  * Fetch a multi-stop driving route via OSRM.
- * Returns real road geometry + per-segment distance/duration.
+ * Returns real road geometry + per-segment distance/duration/roadName/hasToll.
  * Tries the FOSSGIS primary server first, falls back to the OSRM demo.
  */
 export async function getRoute(
@@ -51,17 +115,19 @@ export async function getRoute(
   const cached = routeCache.get(cacheKey)
   if (cached) return cached
 
-  const primaryUrl = `${OSRM_PRIMARY[profile] ?? OSRM_PRIMARY.driving}/${coords}?overview=full&geometries=geojson&annotations=distance,duration`
-  const fallbackUrl = `${OSRM_FALLBACK}/${coords}?overview=full&geometries=geojson&annotations=distance,duration`
+  // steps=true → road names + toll class per intersection
+  const params = 'overview=full&geometries=geojson&steps=true&annotations=distance,duration'
+  const primaryUrl = `${OSRM_PRIMARY[profile] ?? OSRM_PRIMARY.driving}/${coords}?${params}`
+  const fallbackUrl = `${OSRM_FALLBACK}/${coords}?${params}`
 
   let data: unknown
   try {
-    const res = await fetch(primaryUrl, { signal: AbortSignal.timeout(7_000) })
+    const res = await fetch(primaryUrl, { signal: AbortSignal.timeout(10_000) })
     if (!res.ok) throw new Error(`OSRM primary ${res.status}`)
     data = await res.json()
   } catch {
     // Primary timed out or failed — fall back to OSRM demo server
-    const res = await fetch(fallbackUrl, { signal: AbortSignal.timeout(7_000) })
+    const res = await fetch(fallbackUrl, { signal: AbortSignal.timeout(10_000) })
     if (!res.ok) throw new Error(`OSRM fallback ${res.status}`)
     data = await res.json()
   }
@@ -72,7 +138,11 @@ export async function getRoute(
       geometry: { coordinates: [number, number][] }
       distance: number
       duration: number
-      legs: Array<{ distance: number; duration: number }>
+      legs: Array<{
+        distance: number
+        duration: number
+        steps: OsrmStep[]
+      }>
     }>
   }
   if (d.code !== 'Ok' || !d.routes?.[0]) throw new Error('No route found from OSRM')
@@ -85,10 +155,15 @@ export async function getRoute(
   )
 
   const segments: OsrmSegment[] = (route.legs ?? []).map(
-    (leg: { distance: number; duration: number }) => ({
-      distance: leg.distance,
-      duration: leg.duration,
-    })
+    (leg: { distance: number; duration: number; steps: OsrmStep[] }) => {
+      const { roadName, hasToll } = extractLegRoadInfo(leg.steps ?? [])
+      return {
+        distance: leg.distance,
+        duration: leg.duration,
+        roadName: roadName ?? undefined,
+        hasToll: hasToll || undefined,
+      }
+    }
   )
 
   const result: OsrmRouteResult = {
