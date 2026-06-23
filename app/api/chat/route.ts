@@ -2,7 +2,8 @@ import { streamText } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { agentTools, SYSTEM_PROMPT } from '@/lib/claude-tools'
 
-export const maxDuration = 60
+export const runtime = 'edge'
+export const maxDuration = 30
 
 // OpenRouter: unified API gateway for 200+ models including Claude
 // Uses the OpenAI-compatible endpoint with a custom base URL
@@ -23,9 +24,11 @@ const MODEL = process.env.OPENROUTER_MODEL ?? 'openai/gpt-oss-120b:free'
 export async function POST(req: Request) {
   const { messages } = await req.json()
 
+  const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+
   const result = streamText({
     model: openrouter(MODEL),
-    system: SYSTEM_PROMPT,
+    system: `${SYSTEM_PROMPT}\n\nToday's date is ${today}. Use this as the default trip start date when none is provided.`,
     messages,
     tools: agentTools,
     maxSteps: 10,

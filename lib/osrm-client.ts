@@ -56,12 +56,12 @@ export async function getRoute(
 
   let data: unknown
   try {
-    const res = await fetch(primaryUrl, { signal: AbortSignal.timeout(12_000) })
+    const res = await fetch(primaryUrl, { signal: AbortSignal.timeout(7_000) })
     if (!res.ok) throw new Error(`OSRM primary ${res.status}`)
     data = await res.json()
   } catch {
     // Primary timed out or failed — fall back to OSRM demo server
-    const res = await fetch(fallbackUrl, { signal: AbortSignal.timeout(12_000) })
+    const res = await fetch(fallbackUrl, { signal: AbortSignal.timeout(7_000) })
     if (!res.ok) throw new Error(`OSRM fallback ${res.status}`)
     data = await res.json()
   }

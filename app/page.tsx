@@ -11,6 +11,7 @@ import BookingReviewModal, { type BookingSummary } from '@/components/BookingRev
 import ItineraryPanel from '@/components/ItineraryPanel'
 import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, ConfirmedReservation } from '@/types'
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
+import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 
 export default function HomePage() {
   const [chatCollapsed, setChatCollapsed] = useState(false)
@@ -27,35 +28,43 @@ export default function HomePage() {
   const [confirmedReservations, setConfirmedReservations] = useState<ConfirmedReservation[]>([])
   const [itineraryOpen, setItineraryOpen] = useState(false)
 
+  const proactivePois = useProactivePlaces(stops)
+
   const { messages, input, handleInputChange, handleSubmit, isLoading, append, setInput } = useChat({
     api: '/api/chat',
   })
 
-  // Process ALL messages whenever the array changes — more reliable than onFinish,
-  // which only gets the last assistant message's parts (missing tool-result messages).
-  // Track which message IDs we've already processed to avoid reprocessing.
+  // Process ALL messages whenever the array changes — more reliable than onFinish.
+  // AI SDK 4.x: tool results arrive as parts with type='tool-invocation' and
+  // toolInvocation.state='result' (NOT type='tool-result').
   const processedIds = useRef(new Set<string>())
   useEffect(() => {
     for (const msg of messages) {
       if (processedIds.current.has(msg.id)) continue
-      // Tool results arrive as parts on assistant messages
-      const parts = (msg as { parts?: Array<{ type: string; toolName?: string; result?: unknown }> }).parts ?? []
+      const parts = (msg as {
+        parts?: Array<{
+          type: string
+          toolInvocation?: { toolName: string; state: string; result?: unknown }
+        }>
+      }).parts ?? []
       for (const part of parts) {
-        if (part.type !== 'tool-result') continue
-        const result = part.result as Record<string, unknown>
-        if (part.toolName === 'suggest_route_stops') {
+        if (part.type !== 'tool-invocation') continue
+        const ti = part.toolInvocation
+        if (!ti || ti.state !== 'result') continue
+        const result = ti.result as Record<string, unknown>
+        if (ti.toolName === 'suggest_route_stops') {
           if (result?.stops) setStops(result.stops as RouteStop[])
           if (result?.routeGeometry) setRouteGeometry(result.routeGeometry as RouteGeometry)
           if (result?.totalDistance) setTotalDistance(result.totalDistance as string)
           if (result?.totalDuration) setTotalDuration(result.totalDuration as string)
         }
-        if (part.toolName === 'search_hotels' && result?.hotels) setHotels(result.hotels as Hotel[])
-        if (part.toolName === 'search_attractions' && result?.attractions) setAttractions(result.attractions as Attraction[])
-        if (part.toolName === 'explore_surroundings') {
+        if (ti.toolName === 'search_hotels' && result?.hotels) setHotels(result.hotels as Hotel[])
+        if (ti.toolName === 'search_attractions' && result?.attractions) setAttractions(result.attractions as Attraction[])
+        if (ti.toolName === 'explore_surroundings') {
           if (result?.surroundings) setSurroundings(result.surroundings as Attraction[])
           setIsSurroundingsLoading(false)
         }
-        if (part.toolName === 'build_booking_summary' && result?.summary) {
+        if (ti.toolName === 'build_booking_summary' && result?.summary) {
           setBookingSummary(result.summary as BookingSummary)
         }
       }
@@ -120,17 +129,22 @@ export default function HomePage() {
           routeGeometry={routeGeometry}
           selectedStop={selectedStop}
           confirmedReservations={confirmedReservations}
+          proactivePOIs={proactivePois}
           onStopClick={stop => { setSelectedStop(stop); setSurroundings([]) }}
         />
       </div>
 
       {/* Map legend (bottom-right, above zoom controls) */}
-      {(attractions.length > 0 || hotels.length > 0 || surroundings.length > 0 || confirmedReservations.length > 0) && (
+      {(attractions.length > 0 || hotels.length > 0 || surroundings.length > 0 || confirmedReservations.length > 0 ||
+        proactivePois.gasStations.length > 0 || proactivePois.restaurants.length > 0 || proactivePois.attractions.length > 0) && (
         <div className="absolute bottom-52 right-4 z-[1000] bg-white/90 backdrop-blur-md rounded-xl px-3 py-2 shadow-lg border border-white/50 text-xs space-y-1">
           {confirmedReservations.length > 0 && <div className="flex items-center gap-1.5"><span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px]">✓</span> Booked</div>}
           {hotels.length > 0 && <div className="flex items-center gap-1.5"><span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px]">H</span> Hotels</div>}
           {attractions.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 border-2 border-amber-600 inline-block" /> Attractions</div>}
           {surroundings.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-teal-400 border-2 border-teal-600 inline-block" /> Outdoor</div>}
+          {proactivePois.gasStations.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-gray-300 border border-gray-500 inline-block" /> Gas</div>}
+          {proactivePois.restaurants.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-orange-200 border border-orange-600 inline-block" /> Food</div>}
+          {proactivePois.attractions.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-violet-200 border border-violet-600 inline-block" /> POIs</div>}
         </div>
       )}
 

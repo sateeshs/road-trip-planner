@@ -4,10 +4,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { MapContainer, TileLayer, Marker, Polyline, CircleMarker, useMap } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
-import 'leaflet.markercluster/dist/MarkerCluster.css'
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
 import type { RouteStop, Attraction, Hotel, RouteGeometry, ConfirmedReservation } from '@/types'
+import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import MapControlsPill from './MapControlsPill'
 
 // Fix default Leaflet icon URLs (Vite/Next.js bundler issue — ported from TREK)
@@ -302,11 +300,12 @@ interface LeafletMapProps {
   selectedStop: RouteStop | null
   onStopClick: (stop: RouteStop) => void
   confirmedReservations?: ConfirmedReservation[]
+  proactivePOIs?: ProactivePOIs
 }
 
 export default function LeafletMap({
   stops, attractions, surroundings, hotels, routeGeometry, selectedStop, onStopClick,
-  confirmedReservations = [],
+  confirmedReservations = [], proactivePOIs,
 }: LeafletMapProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [segmentCard, setSegmentCard] = useState<{ info: SegmentInfo; x: number; y: number } | null>(null)
@@ -373,9 +372,9 @@ export default function LeafletMap({
         style={{ height: '100%', width: '100%' }}
         zoomControl={false}
       >
-        {/* CartoDB light tiles — cleaner for road trip planning (ported from TREK) */}
+        {/* CartoDB Voyager tiles — shows streets, place names, POI labels (Google Maps-like) */}
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
           maxZoom={19}
           subdomains="abcd"
@@ -533,6 +532,47 @@ export default function LeafletMap({
                 ),
               mousemove: (e: L.LeafletMouseEvent) =>
                 showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, s.name, s.category),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
+
+        {/* ── Proactive POIs from Overpass (gas stations, restaurants, attractions) ── */}
+        {proactivePOIs?.gasStations.map(p => (
+          <CircleMarker
+            key={p.id}
+            center={[p.coordinates.lat, p.coordinates.lng]}
+            radius={5}
+            pathOptions={{ color: '#6b7280', fillColor: '#d1d5db', fillOpacity: 0.85, weight: 1.5 }}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name, 'Gas Station'),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name, 'Gas Station'),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
+        {proactivePOIs?.restaurants.map(p => (
+          <CircleMarker
+            key={p.id}
+            center={[p.coordinates.lat, p.coordinates.lng]}
+            radius={5}
+            pathOptions={{ color: '#ea580c', fillColor: '#fed7aa', fillOpacity: 0.85, weight: 1.5 }}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name, p.category),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name, p.category),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
+        {proactivePOIs?.attractions.map(p => (
+          <CircleMarker
+            key={p.id}
+            center={[p.coordinates.lat, p.coordinates.lng]}
+            radius={5}
+            pathOptions={{ color: '#7c3aed', fillColor: '#ddd6fe', fillOpacity: 0.85, weight: 1.5 }}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name, p.category),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name, p.category),
               mouseout: hideTooltip,
             }}
           />
