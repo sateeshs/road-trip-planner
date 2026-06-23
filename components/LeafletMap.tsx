@@ -22,31 +22,57 @@ L.Icon.Default.mergeOptions({
 
 const stopIconCache = new Map<string, L.DivIcon>()
 
-function createStopIcon(index: number, isSelected: boolean, isOrigin: boolean) {
-  const key = `${index}:${isSelected}:${isOrigin}`
+function createStopIcon(
+  index: number,
+  isSelected: boolean,
+  isOrigin: boolean,
+  isDestination: boolean,
+) {
+  const key = `${index}:${isSelected}:${isOrigin}:${isDestination}`
   if (stopIconCache.has(key)) return stopIconCache.get(key)!
 
-  const color = isOrigin ? '#6b7280' : isSelected ? '#111827' : '#0a84ff'
+  // Origin = green, Destination = red, intermediate = blue, selected = dark
+  const baseColor = isOrigin ? '#16a34a' : isDestination ? '#dc2626' : '#0a84ff'
+  const color = isSelected ? '#111827' : baseColor
   const borderColor = isSelected ? '#111827' : 'white'
-  const size = isSelected ? 46 : 38
+  const size = isSelected ? 48 : isOrigin || isDestination ? 42 : 38
   const shadow = isSelected
     ? '0 0 0 3px rgba(17,24,39,0.22), 0 4px 14px rgba(0,0,0,0.35)'
-    : '0 2px 10px rgba(0,0,0,0.28)'
-  const label = isOrigin ? '🚗' : String(index)
-  const fontSize = isOrigin ? 16 : 14
+    : isOrigin || isDestination
+      ? '0 3px 12px rgba(0,0,0,0.32)'
+      : '0 2px 10px rgba(0,0,0,0.28)'
 
-  // Pulse ring for selected stop (ported from TREK selection emphasis)
+  // Labels: 🚗 for origin, 🏁 for destination, number for intermediate
+  const label = isOrigin ? '🚗' : isDestination ? '🏁' : String(index)
+  const fontSize = isOrigin || isDestination ? 18 : 14
+
+  // Label pill below the marker (START / END / city abbreviation)
+  const pillText = isOrigin ? 'START' : isDestination ? 'END' : ''
+  const pillColor = isOrigin ? '#16a34a' : '#dc2626'
+  const pill = pillText ? `<div style="
+    position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);
+    background:${pillColor};color:white;
+    font-size:8px;font-weight:800;letter-spacing:0.5px;
+    padding:1px 5px;border-radius:99px;
+    white-space:nowrap;pointer-events:none;
+    border:1.5px solid white;
+    box-shadow:0 1px 4px rgba(0,0,0,0.2);
+  ">${pillText}</div>` : ''
+
+  // Pulse ring for selected stop
   const pulse = isSelected ? `<div style="
     position:absolute;inset:-8px;border-radius:50%;
     border:2.5px solid #111827;opacity:0.3;
     animation:rtp-ping 1.4s cubic-bezier(0,0,0.2,1) infinite;
   "></div>` : ''
 
+  const totalH = size + (pill ? 20 : 0)
+
   const icon = L.divIcon({
     className: '',
     html: `
       <style>@keyframes rtp-ping{75%,100%{transform:scale(1.7);opacity:0}}</style>
-      <div style="position:relative;width:${size}px;height:${size}px;">
+      <div style="position:relative;width:${size}px;height:${totalH}px;">
         ${pulse}
         <div style="
           width:${size}px;height:${size}px;border-radius:50%;
@@ -58,8 +84,9 @@ function createStopIcon(index: number, isSelected: boolean, isOrigin: boolean) {
           cursor:pointer;position:relative;z-index:1;
           will-change:transform;
         ">${label}</div>
+        ${pill}
       </div>`,
-    iconSize: [size, size],
+    iconSize: [size, totalH],
     iconAnchor: [size / 2, size / 2],
   })
   stopIconCache.set(key, icon)
@@ -349,7 +376,7 @@ export default function LeafletMap({
           <Marker
             key={stop.city}
             position={[stop.coordinates.lat, stop.coordinates.lng]}
-            icon={createStopIcon(i, selectedStop?.city === stop.city, i === 0)}
+            icon={createStopIcon(i, selectedStop?.city === stop.city, i === 0, i === stops.length - 1)}
             eventHandlers={{
               click: () => { hideTooltip(); onStopClick(stop) },
               mouseover: (e: L.LeafletMouseEvent) =>
