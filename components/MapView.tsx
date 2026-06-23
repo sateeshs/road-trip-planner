@@ -1,6 +1,6 @@
 'use client'
 import dynamic from 'next/dynamic'
-import type { RouteStop, Attraction, Hotel, RouteGeometry } from '@/types'
+import type { RouteStop, Attraction, Hotel, RouteGeometry, ConfirmedReservation } from '@/types'
 import Spinner from './shared/Spinner'
 
 const LeafletMap = dynamic(() => import('./LeafletMap'), {
@@ -23,6 +23,7 @@ interface MapViewProps {
   routeGeometry: RouteGeometry | null
   selectedStop: RouteStop | null
   onStopClick: (stop: RouteStop) => void
+  confirmedReservations?: ConfirmedReservation[]
 }
 
 export default function MapView(props: MapViewProps) {

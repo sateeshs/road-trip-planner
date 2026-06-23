@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import type { Message } from 'ai'
+import ReactMarkdown from 'react-markdown'
 import Spinner from './shared/Spinner'
 
 interface ChatPanelProps {
@@ -81,7 +82,13 @@ export default function ChatPanel({
               {m.role === 'assistant' && (
                 <p className="text-xs font-medium text-gray-400 mb-1">AI Assistant</p>
               )}
-              <p className="whitespace-pre-wrap">{m.content}</p>
+              {m.role === 'assistant' ? (
+                <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-headings:my-1 prose-strong:font-bold prose-a:text-blue-600">
+                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                </div>
+              ) : (
+                <p className="whitespace-pre-wrap">{m.content}</p>
+              )}
             </div>
           </div>
         ))}

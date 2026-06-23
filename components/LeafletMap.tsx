@@ -7,7 +7,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.markercluster/dist/MarkerCluster.css'
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
-import type { RouteStop, Attraction, Hotel, RouteGeometry } from '@/types'
+import type { RouteStop, Attraction, Hotel, RouteGeometry, ConfirmedReservation } from '@/types'
 import MapControlsPill from './MapControlsPill'
 
 // Fix default Leaflet icon URLs (Vite/Next.js bundler issue — ported from TREK)
@@ -111,6 +111,40 @@ function createHotelIcon(): L.DivIcon {
     iconAnchor: [12, 12],
   })
   return _hotelIcon
+}
+
+// Confirmed reservation marker — gold with checkmark, ported from TREK's confirmed status styling
+const confirmedIconCache = new Map<string, L.DivIcon>()
+function createConfirmedHotelIcon(status: 'confirmed' | 'pending'): L.DivIcon {
+  const cached = confirmedIconCache.get(status)
+  if (cached) return cached
+  const bg = status === 'confirmed' ? '#16a34a' : '#ca8a04'
+  const border = status === 'confirmed' ? '#86efac' : '#fde047'
+  const label = status === 'confirmed' ? '✓' : '…'
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      width:28px;height:28px;border-radius:6px;
+      background:${bg};color:white;
+      display:flex;align-items:center;justify-content:center;
+      font-size:13px;font-weight:800;
+      border:2.5px solid ${border};
+      box-shadow:0 2px 10px rgba(0,0,0,0.3);
+      cursor:pointer;position:relative;
+    ">
+      ${label}
+      <div style="
+        position:absolute;top:-4px;right:-4px;
+        width:10px;height:10px;border-radius:50%;
+        background:${bg};border:1.5px solid white;
+        font-size:7px;display:flex;align-items:center;justify-content:center;
+      ">🏨</div>
+    </div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  })
+  confirmedIconCache.set(status, icon)
+  return icon
 }
 
 // ─── Cluster icon (ported from TREK clusterIconCreateFunction) ─────────────
@@ -267,10 +301,12 @@ interface LeafletMapProps {
   routeGeometry: RouteGeometry | null
   selectedStop: RouteStop | null
   onStopClick: (stop: RouteStop) => void
+  confirmedReservations?: ConfirmedReservation[]
 }
 
 export default function LeafletMap({
   stops, attractions, surroundings, hotels, routeGeometry, selectedStop, onStopClick,
+  confirmedReservations = [],
 }: LeafletMapProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [segmentCard, setSegmentCard] = useState<{ info: SegmentInfo; x: number; y: number } | null>(null)
@@ -432,6 +468,29 @@ export default function LeafletMap({
             />
           ))}
         </MarkerClusterGroup>
+
+        {/* ── Confirmed reservation markers — shown above hotels, ported from TREK confirmed status ── */}
+        {confirmedReservations.map(res => (
+          <Marker
+            key={`res-${res.id}`}
+            position={[res.stopCoordinates.lat, res.stopCoordinates.lng]}
+            icon={createConfirmedHotelIcon(res.status)}
+            zIndexOffset={2000}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) =>
+                showTooltip(
+                  e.originalEvent.clientX,
+                  e.originalEvent.clientY,
+                  res.hotelName,
+                  `${res.status === 'confirmed' ? '✓ Confirmed' : '⏳ Pending'} · ${res.nights} nights`,
+                  `Check-in: ${res.checkIn}  ·  $${res.totalPrice.toFixed(0)} total`,
+                ),
+              mousemove: (e: L.LeafletMouseEvent) =>
+                showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, res.hotelName, res.status === 'confirmed' ? '✓ Confirmed' : '⏳ Pending'),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
 
         {/* ── Attraction markers (amber circles) ── */}
         {attractions.map(a => (

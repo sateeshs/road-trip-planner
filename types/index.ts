@@ -66,6 +66,32 @@ export interface BookingRequest {
   guests: { firstName: string; lastName: string; email: string }
 }
 
+/**
+ * A confirmed (or pending) hotel reservation — ported from TREK's Reservation model.
+ * Stored client-side after user confirms in the BookingReviewModal.
+ */
+export interface ConfirmedReservation {
+  id: string                  // offerId — unique per booking
+  type: 'hotel'               // extendable later for flights, car rentals
+  status: 'pending' | 'confirmed'
+  hotelId: string
+  hotelName: string
+  stopCity: string
+  stopState: string
+  stopCoordinates: { lat: number; lng: number }
+  checkIn: string             // ISO date
+  checkOut: string            // ISO date
+  nights: number
+  roomType: string
+  pricePerNight: number
+  totalPrice: number
+  currency: string
+  cancellationPolicy: string
+  breakfastIncluded: boolean
+  bookingUrl: string
+  confirmedAt: string         // ISO datetime
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
