@@ -283,7 +283,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [selectedStop])
 
   const handleOptimizeRoute = useCallback(() => {
-    if (stops.length < 4) return  // need at least origin + 2 intermediates + destination to be worth optimizing
+    if (stops.length < 3) return  // need at least origin + 1 intermediate + destination
     const origin = stops[0]
     const destination = stops[stops.length - 1]
     const intermediates = stops.slice(1, -1)

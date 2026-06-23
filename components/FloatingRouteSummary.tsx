@@ -19,7 +19,7 @@ export default function FloatingRouteSummary({
   const origin = stops[0].city
   const dest = stops[stops.length - 1].city
   const midStops = stops.slice(1, -1)
-  const canOptimize = stops.length >= 4  // need ≥2 intermediate stops
+  const canOptimize = stops.length >= 3  // need at least 1 intermediate stop
 
   return (
     <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2">
