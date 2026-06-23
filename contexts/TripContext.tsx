@@ -94,6 +94,28 @@ export function useTripContext(): TripContextValue {
   return ctx
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Finds the stop whose city name best matches the AI-provided city string.
+ * The AI often uses a nearby city name instead of the exact stop name
+ * (e.g. "Munising" for a "Pictured Rocks" stop, or "Sault Ste. Marie" for "Soo Locks").
+ * Matching logic: exact → prefix → word overlap.
+ */
+function findMatchingStop(stops: RouteStop[], aiCity: string): RouteStop | undefined {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const key = norm(aiCity)
+  // 1. Exact match
+  const exact = stops.find(s => norm(s.city) === key)
+  if (exact) return exact
+  // 2. One contains the other
+  const contains = stops.find(s => key.includes(norm(s.city)) || norm(s.city).includes(key))
+  if (contains) return contains
+  // 3. Any word overlap
+  const aiWords = key.split(/\s+/).filter(w => w.length > 2)
+  return stops.find(s => aiWords.some(w => norm(s.city).includes(w)))
+}
+
 // ─── Provider ───────────────────────────────────────────────────────────────
 
 export function TripProvider({ children }: { children: ReactNode }) {
@@ -158,12 +180,30 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
         if (ti.toolName === 'search_hotels' && result?.hotels && result?.city) {
           const city = result.city as string
-          setHotelsByCity(prev => ({ ...prev, [city]: result.hotels as Hotel[] }))
+          // Store under both the AI-provided name and the canonical stop city name
+          // (they can differ, e.g. AI uses "Munising" but stop city is "Pictured Rocks")
+          setStops(prev => {
+            const matchedStop = findMatchingStop(prev, city)
+            setHotelsByCity(h => ({
+              ...h,
+              [city]: result.hotels as Hotel[],
+              ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.hotels as Hotel[] } : {}),
+            }))
+            return prev
+          })
         }
 
         if (ti.toolName === 'search_attractions' && result?.attractions && result?.city) {
           const city = result.city as string
-          setAttractionsByCity(prev => ({ ...prev, [city]: result.attractions as Attraction[] }))
+          setStops(prev => {
+            const matchedStop = findMatchingStop(prev, city)
+            setAttractionsByCity(a => ({
+              ...a,
+              [city]: result.attractions as Attraction[],
+              ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.attractions as Attraction[] } : {}),
+            }))
+            return prev
+          })
         }
 
         if (ti.toolName === 'explore_surroundings') {

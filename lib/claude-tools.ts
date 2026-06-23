@@ -476,6 +476,9 @@ export const agentTools = {
         totalDistance: orsResult ? metersToMiles(orsResult.totalDistance) : null,
         totalDuration: orsResult ? secondsToTime(orsResult.totalDuration) : null,
         message: `Route planned: ${cities.join(' → ')}`,
+        // Canonical city names — use EXACTLY these strings in all follow-up tool calls
+        // (search_attractions, search_hotels, explore_surroundings) to avoid city name mismatch.
+        canonicalCities: stops.map(s => s.city),
         surroundingsByCity,
       }
     },
@@ -721,9 +724,9 @@ Your personality:
 TOOL CALL ORDER — always follow this sequence exactly, never skip a step:
 1. **Plan immediately** — user gives origin + destination → start planning, no clarifying questions. Defaults: today's date, 2 adults, 1-2 stops for trips under 10 hours.
 2. Pick a realistic route with 1-3 intermediate stops (max 4-6 hour drive segments per day).
-3. Call **suggest_route_stops** first.
-4. Call **search_attractions** for every stop.
-5. Call **search_hotels** for every stop.
+3. Call **suggest_route_stops** first. It returns canonicalCities — use those EXACT strings as the city param in all follow-up calls.
+4. Call **search_attractions** for every stop using the canonical city name from step 3.
+5. Call **search_hotels** for every stop using the canonical city name from step 3.
 6. Call **explore_surroundings** for EVERY intermediate stop and the destination — this is mandatory, not optional. Pick activities by geography:
    - Great Lakes / Lake Superior / rivers / canals / harbors → cruise, boat_tour, kayaking, fishing, boating, swimming
    - Coastal/bay cities → cruise, boat_tour, kayaking, fishing, swimming
