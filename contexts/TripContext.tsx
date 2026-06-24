@@ -167,19 +167,36 @@ export function TripProvider({ children }: { children: ReactNode }) {
     api: '/api/chat',
   })
 
+  // ── Keep a ref to latest stops so we can read them inside the effect
+  //    without adding `stops` to the dependency array (which would cause
+  //    infinite re-renders since we call setStops inside the effect).
+  const stopsRef = useRef<RouteStop[]>(stops)
+  stopsRef.current = stops
+
   // ── Process tool results from AI messages ──
   // AI SDK 4.x: tool results are in message.parts with type='tool-invocation', state='result'
   const processedIds = useRef(new Set<string>())
   useEffect(() => {
     for (const msg of messages) {
       if (processedIds.current.has(msg.id)) continue
-      const parts = (msg as {
-        parts?: Array<{
-          type: string
-          toolInvocation?: { toolName: string; state: string; result?: unknown }
-        }>
-      }).parts ?? []
+      type Part = { type: string; toolInvocation?: { toolName: string; state: string; result?: unknown } }
+      const parts = (msg as { parts?: Part[] }).parts ?? []
 
+      // ── Pass 1: collect new stops from suggest_route_stops so subsequent
+      //    tools (search_attractions, search_hotels) can do city-name fuzzy
+      //    matching without relying on React state that may not have committed yet.
+      let batchStops: RouteStop[] = stopsRef.current
+      for (const part of parts) {
+        if (part.type !== 'tool-invocation') continue
+        const ti = part.toolInvocation
+        if (!ti || ti.state !== 'result') continue
+        const result = ti.result as Record<string, unknown>
+        if (ti.toolName === 'suggest_route_stops' && result?.stops) {
+          batchStops = result.stops as RouteStop[]
+        }
+      }
+
+      // ── Pass 2: apply all tool results
       for (const part of parts) {
         if (part.type !== 'tool-invocation') continue
         const ti = part.toolInvocation
@@ -199,30 +216,25 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
         if (ti.toolName === 'search_hotels' && result?.hotels && result?.city) {
           const city = result.city as string
-          // Store under both the AI-provided name and the canonical stop city name
-          // (they can differ, e.g. AI uses "Munising" but stop city is "Pictured Rocks")
-          setStops(prev => {
-            const matchedStop = findMatchingStop(prev, city)
-            setHotelsByCity(h => ({
-              ...h,
-              [city]: result.hotels as Hotel[],
-              ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.hotels as Hotel[] } : {}),
-            }))
-            return prev
-          })
+          // Store under both the AI-provided city name AND the canonical stop city name
+          // so the bottom sheet finds data regardless of name drift (e.g. AI uses
+          // "Munising" but stop.city is "Pictured Rocks")
+          const matchedStop = findMatchingStop(batchStops, city)
+          setHotelsByCity(h => ({
+            ...h,
+            [city]: result.hotels as Hotel[],
+            ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.hotels as Hotel[] } : {}),
+          }))
         }
 
         if (ti.toolName === 'search_attractions' && result?.attractions && result?.city) {
           const city = result.city as string
-          setStops(prev => {
-            const matchedStop = findMatchingStop(prev, city)
-            setAttractionsByCity(a => ({
-              ...a,
-              [city]: result.attractions as Attraction[],
-              ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.attractions as Attraction[] } : {}),
-            }))
-            return prev
-          })
+          const matchedStop = findMatchingStop(batchStops, city)
+          setAttractionsByCity(a => ({
+            ...a,
+            [city]: result.attractions as Attraction[],
+            ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.attractions as Attraction[] } : {}),
+          }))
         }
 
         if (ti.toolName === 'explore_surroundings') {
