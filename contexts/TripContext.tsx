@@ -146,8 +146,18 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [mapMenu, setMapMenu] = useState<MapMenu | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
-  const [planActivities, setPlanActivities] = useState<PlanActivity[]>([])
+  const [planActivities, setPlanActivities] = useState<PlanActivity[]>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('rtp:plan') : null
+      return stored ? (JSON.parse(stored) as PlanActivity[]) : []
+    } catch { return [] }
+  })
   const [planOpen, setPlanOpen] = useState(false)
+
+  // Persist plan to localStorage whenever it changes
+  useEffect(() => {
+    try { localStorage.setItem('rtp:plan', JSON.stringify(planActivities)) } catch { /* quota exceeded */ }
+  }, [planActivities])
 
   // ── Proactive POIs ──
   const proactivePois = useProactivePlaces(stops)
