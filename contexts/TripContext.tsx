@@ -323,12 +323,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [selectedStop])
 
   const handleOptimizeRoute = useCallback(() => {
-    if (stops.length < 3) return  // need at least origin + 1 intermediate + destination
+    if (stops.length < 4) return  // need at least 2 intermediates to reorder
     const origin = stops[0]
     const destination = stops[stops.length - 1]
     const intermediates = stops.slice(1, -1)
 
-    // Reorder intermediates using nearest-neighbor + 2-opt (TREK RouteCalculator pattern)
+    // Reorder intermediates using nearest-neighbor + 2-opt (ported from TREK RouteCalculator)
     const optimized = optimizeRoute(
       intermediates.map(s => ({ ...s, lat: s.coordinates.lat, lng: s.coordinates.lng })),
       {
@@ -337,22 +337,19 @@ export function TripProvider({ children }: { children: ReactNode }) {
       }
     )
 
-    // Check if order actually changed
-    const same = optimized.every((s, i) => s.city === intermediates[i].city)
-    if (same) return
-
-    // Build new ordered city list and re-run the full AI route planning
     const reorderedCities = [
       `${origin.city}, ${origin.state}`,
       ...optimized.map(s => `${s.city}, ${s.state}`),
       `${destination.city}, ${destination.state}`,
     ]
 
+    const changed = optimized.some((s, i) => s.city !== intermediates[i].city)
+    const msg = changed
+      ? `Optimize my route — reorder stops to minimize driving. Recalculate the itinerary in this order: ${reorderedCities.join(' → ')}`
+      : `My route is already optimized: ${reorderedCities.join(' → ')}. Please confirm and show the current itinerary summary.`
+
     setIsOptimizing(true)
-    append({
-      role: 'user',
-      content: `Optimize my route — I've reordered the stops to minimize driving. Please recalculate the itinerary in this order: ${reorderedCities.join(' → ')}`,
-    }).finally(() => setIsOptimizing(false))
+    append({ role: 'user', content: msg }).finally(() => setIsOptimizing(false))
   }, [stops, append])
 
   const handleCancelReservation = useCallback((id: string) => {
