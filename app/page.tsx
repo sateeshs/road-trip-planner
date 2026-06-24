@@ -8,6 +8,7 @@ import FloatingRouteSummary from '@/components/FloatingRouteSummary'
 import MapSuggestions from '@/components/MapSuggestions'
 import BookingReviewModal from '@/components/BookingReviewModal'
 import ItineraryPanel from '@/components/ItineraryPanel'
+import PlanPanel from '@/components/PlanPanel'
 import type { Hotel, HotelOffer } from '@/types'
 
 export default function HomePage() {
@@ -56,6 +57,10 @@ function TripLayout() {
     handleConfirmBooking,
     handleCancelReservation,
     handleReservationStatusChange,
+    planActivities,
+    planOpen,
+    setPlanOpen,
+    removeFromPlan,
   } = useTripContext()
 
   function handleSuggestionSelect(text: string) {
@@ -201,6 +206,14 @@ function TripLayout() {
           onConfirm={() => handleConfirmBooking(bookingSummary)}
         />
       )}
+
+      {/* Activity plan panel */}
+      <PlanPanel
+        activities={planActivities}
+        open={planOpen}
+        onClose={() => setPlanOpen(false)}
+        onRemove={removeFromPlan}
+      />
 
       {/* Itinerary panel */}
       <ItineraryPanel

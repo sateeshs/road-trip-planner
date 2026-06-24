@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { useChat } from 'ai/react'
 import type { BookingSummary } from '@/components/BookingReviewModal'
-import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, ConfirmedReservation } from '@/types'
+import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, ConfirmedReservation, PlanActivity } from '@/types'
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 import { reverseGeocode } from '@/lib/route-utils'
@@ -82,6 +82,13 @@ export interface TripContextValue {
   handleReservationStatusChange: (id: string, status: ConfirmedReservation['status']) => void
   handleOptimizeRoute: () => void
   isOptimizing: boolean
+  // Activity plan (TREK "place pool" concept, client-side)
+  planActivities: PlanActivity[]
+  planOpen: boolean
+  setPlanOpen: (open: boolean) => void
+  addToPlan: (attraction: Attraction, stop: RouteStop, type: 'attraction' | 'outdoor') => void
+  removeFromPlan: (id: string) => void
+  isInPlan: (id: string) => boolean
 }
 
 // ─── Context ────────────────────────────────────────────────────────────────
@@ -139,6 +146,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [mapMenu, setMapMenu] = useState<MapMenu | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
+  const [planActivities, setPlanActivities] = useState<PlanActivity[]>([])
+  const [planOpen, setPlanOpen] = useState(false)
 
   // ── Proactive POIs ──
   const proactivePois = useProactivePlaces(stops)
@@ -352,6 +361,36 @@ export function TripProvider({ children }: { children: ReactNode }) {
     append({ role: 'user', content: msg }).finally(() => setIsOptimizing(false))
   }, [stops, append])
 
+  const addToPlan = useCallback((attraction: Attraction, stop: RouteStop, type: 'attraction' | 'outdoor') => {
+    setPlanActivities(prev => {
+      if (prev.some(a => a.id === attraction.id)) return prev  // already saved
+      const activity: PlanActivity = {
+        id: attraction.id,
+        name: attraction.name,
+        category: attraction.category,
+        city: stop.city,
+        state: stop.state,
+        checkIn: stop.checkIn,
+        checkOut: stop.checkOut,
+        coordinates: attraction.coordinates,
+        address: attraction.address,
+        website: attraction.website,
+        type,
+        savedAt: new Date().toISOString(),
+      }
+      return [...prev, activity]
+    })
+    setPlanOpen(true)
+  }, [])
+
+  const removeFromPlan = useCallback((id: string) => {
+    setPlanActivities(prev => prev.filter(a => a.id !== id))
+  }, [])
+
+  const isInPlan = useCallback((id: string) => {
+    return planActivities.some(a => a.id === id)
+  }, [planActivities])
+
   const handleCancelReservation = useCallback((id: string) => {
     setConfirmedReservations(prev => prev.filter(r => r.id !== id))
   }, [])
@@ -400,6 +439,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
     handleReservationStatusChange,
     handleOptimizeRoute,
     isOptimizing,
+    planActivities,
+    planOpen,
+    setPlanOpen,
+    addToPlan,
+    removeFromPlan,
+    isInPlan,
   }
 
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>

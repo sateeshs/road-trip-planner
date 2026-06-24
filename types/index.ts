@@ -95,6 +95,27 @@ export interface ConfirmedReservation {
   confirmedAt: string         // ISO datetime
 }
 
+/**
+ * A user-saved activity from the attractions or surroundings list.
+ * Inspired by TREK's "place pool" concept, adapted for client-side-only storage.
+ */
+export interface PlanActivity {
+  id: string                            // attraction/surroundings id
+  name: string
+  category: string
+  emoji?: string                        // pre-computed emoji for the category
+  city: string                          // which stop city it belongs to
+  state: string
+  checkIn: string                       // stop check-in date (for display)
+  checkOut: string                      // stop check-out date (for display)
+  coordinates: { lat: number; lng: number }
+  address?: string
+  website?: string
+  notes?: string                        // user-added note
+  type: 'attraction' | 'outdoor'        // which tab it came from
+  savedAt: string                       // ISO datetime
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'

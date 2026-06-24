@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import type { RouteStop, Hotel, Attraction, HotelOffer } from '@/types'
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
+import { useTripContext } from '@/contexts/TripContext'
 import HotelCard from './HotelCard'
 import AttractionCard from './AttractionCard'
 import SurroundingsCard from './SurroundingsCard'
@@ -34,6 +35,7 @@ export default function StopBottomSheet({
   onExploreSurroundings,
   onRemoveStop,
 }: StopBottomSheetProps) {
+  const { addToPlan, isInPlan } = useTripContext()
   const [tab, setTab] = useState<Tab>('attractions')
   const [visible, setVisible] = useState(false)
 
@@ -126,7 +128,7 @@ export default function StopBottomSheet({
         <div className="overflow-y-auto px-5 py-3" style={{ maxHeight: 'calc(60vh - 130px)' }}>
           {tab === 'attractions' && (
             attractions.length > 0
-              ? <div className="grid grid-cols-2 gap-2">{attractions.map(a => <AttractionCard key={a.id} attraction={a} />)}</div>
+              ? <div className="grid grid-cols-2 gap-2">{attractions.map(a => <AttractionCard key={a.id} attraction={a} onSave={stop ? () => addToPlan(a, stop, 'attraction') : undefined} saved={isInPlan(a.id)} />)}</div>
               : <p className="text-sm text-gray-400 py-4 text-center">Ask the AI about places to visit in {stop?.city}</p>
           )}
           {tab === 'hotels' && (
@@ -143,7 +145,7 @@ export default function StopBottomSheet({
               />
               {surroundings.length > 0 && (
                 <div className="grid grid-cols-2 gap-2">
-                  {surroundings.map(s => <SurroundingsCard key={s.id} attraction={s} />)}
+                  {surroundings.map(s => <SurroundingsCard key={s.id} attraction={s} onSave={stop ? () => addToPlan(s, stop, 'outdoor') : undefined} saved={isInPlan(s.id)} />)}
                 </div>
               )}
             </div>

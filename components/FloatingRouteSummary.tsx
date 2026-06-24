@@ -13,7 +13,7 @@ interface FloatingRouteSummaryProps {
 export default function FloatingRouteSummary({
   stops, totalDistance, totalDuration, bookingCount = 0, onItineraryClick,
 }: FloatingRouteSummaryProps) {
-  const { handleOptimizeRoute, isOptimizing, isLoading } = useTripContext()
+  const { handleOptimizeRoute, isOptimizing, isLoading, planActivities, setPlanOpen } = useTripContext()
 
   if (stops.length < 2) return null
   const origin = stops[0].city
@@ -60,6 +60,20 @@ export default function FloatingRouteSummary({
           <span className="hidden sm:inline">Optimize</span>
         </button>
       )}
+
+      {/* My Plan button */}
+      <button
+        onClick={() => setPlanOpen(true)}
+        className="relative flex items-center gap-1.5 bg-white/90 backdrop-blur-md border border-white/50 shadow-lg rounded-full px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white hover:text-gray-900 transition-colors"
+      >
+        📋
+        <span className="hidden sm:inline">My Plan</span>
+        {planActivities.length > 0 && (
+          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center px-1 border-2 border-white">
+            {planActivities.length}
+          </span>
+        )}
+      </button>
 
       {/* Itinerary button — shows booking count badge */}
       {onItineraryClick && (
