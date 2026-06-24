@@ -201,6 +201,104 @@ out ${limit * 2};`
   return results
 }
 
+// ─── OSM Surroundings — shared function called by explore_surroundings AND suggest_route_stops ──
+// Extracted so suggest_route_stops can auto-populate surroundings for water-adjacent stops
+// without needing a separate AI tool call (avoids edge timeout issues).
+
+/** Detect if a stop is water-adjacent based on coords + name — Great Lakes / river / harbor heuristic */
+function isWaterAdjacent(lat: number, lng: number, cityName: string): boolean {
+  const name = cityName.toLowerCase()
+  // Name keywords for water-based destinations
+  if (/lake|locks|sault|falls|beach|harbor|bay|river|canal|lakeshore|narrows|straits|pictured|rocks/.test(name)) return true
+  // Great Lakes bounding box (Lake Superior, Michigan, Huron, Erie, Ontario + connecting waters)
+  if (lat > 41.3 && lat < 49.5 && lng > -92.5 && lng < -75.5) return true
+  return false
+}
+
+/** Parse raw Overpass elements into Attraction objects for surroundings */
+function parseSurroundingsElements(elements: OsmElement[], city: string, limit: number): Attraction[] {
+  const seen = new Set<string>()
+  const surroundings: Attraction[] = []
+  for (const el of elements) {
+    const elLat = el.lat ?? el.center?.lat
+    const elLng = el.lon ?? el.center?.lon
+    const tags = el.tags ?? {}
+    const name = tags.name ?? tags['name:en'] ?? tags.brand
+    if (!elLat || !elLng || !name || seen.has(name)) continue
+    seen.add(name)
+    const nameLower = name.toLowerCase()
+    const inferredCat =
+      tags.tourism === 'attraction' ? (
+        /cruise|cruises|boat.?tour|ship|sail|ferry|charter/.test(nameLower) ? 'Boat Tour / Cruise' :
+        /kayak|canoe|paddle/.test(nameLower) ? 'Kayaking' :
+        /zip.?line|canopy|aerial/.test(nameLower) ? 'Zip Line' :
+        /horse|equestri/.test(nameLower) ? 'Horseback Riding' :
+        /climb|rappel/.test(nameLower) ? 'Rock Climbing' :
+        /raft|tubing|float/.test(nameLower) ? 'Rafting' :
+        /waterfall|falls/.test(nameLower) ? 'Waterfall' :
+        /hike|trail|scenic/.test(nameLower) ? 'Hiking / Scenic' :
+        'Attraction'
+      ) : null
+    const cat = inferredCat ??
+      (tags.amenity === 'boat_rental' ? 'Boat / Kayak Rental' :
+      tags.tourism === 'boat_tour' ? 'Boat Tour' :
+      tags.tourism === 'camp_site' || tags.leisure === 'camp_site' ? 'Campground' :
+      tags.tourism === 'caravan_site' ? 'RV Park' :
+      tags.attraction === 'boat_tour' ? 'Boat Tour' :
+      tags.attraction === 'scenic_railway' ? 'Scenic Train Ride' :
+      tags.attraction === 'zip_line' ? 'Zip Line' :
+      tags.attraction === 'gondola_lift' || tags.attraction === 'chair_lift' ? 'Scenic Gondola / Tram' :
+      tags.attraction === 'waterfall' ? 'Waterfall' :
+      tags.natural === 'waterfall' ? 'Waterfall' :
+      tags.natural === 'beach' ? 'Beach' :
+      tags.natural === 'peak' ? 'Mountain Peak' :
+      tags.natural === 'hot_spring' ? 'Hot Spring' :
+      tags.natural === 'cave_entrance' ? 'Cave' :
+      tags.sport === 'kayak' || tags.sport === 'kayaking' || tags.sport === 'canoe' || tags.sport === 'canoeing' ? 'Kayaking & Canoeing' :
+      tags.sport === 'sailing' || tags.sport === 'rowing' || tags.sport === 'windsurfing' ? 'Water Sports' :
+      tags.sport === 'climbing' ? 'Rock Climbing' :
+      tags.sport === 'rafting' ? 'Rafting' :
+      tags.sport === 'fishing' ? 'Fishing' :
+      tags.sport === 'skiing' ? 'Skiing' :
+      tags.sport ? tags.sport.charAt(0).toUpperCase() + tags.sport.slice(1) :
+      tags.leisure === 'nature_reserve' ? 'Nature Reserve' :
+      tags.leisure === 'marina' ? 'Marina' :
+      tags.leisure === 'water_park' ? 'Water Park' :
+      tags.leisure ? tags.leisure.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) :
+      'Outdoor Activity')
+    surroundings.push({
+      id: `osm-${el.type}-${el.id}`,
+      name,
+      category: cat,
+      address: osmAddress(tags, city),
+      coordinates: { lat: elLat, lng: elLng },
+      website: tags.website ?? tags['contact:website'],
+    })
+    if (surroundings.length >= limit) break
+  }
+  return surroundings
+}
+
+/** Query OSM for outdoor/activity POIs around a lat/lng. Used by explore_surroundings and suggest_route_stops. */
+async function osmSurroundingsQuery(lat: number, lng: number, city: string, limit = 8, qlTimeout = 15): Promise<Attraction[]> {
+  const r = 30000
+  const ql = `[out:json][timeout:${qlTimeout}];
+(
+  node["leisure"~"park|nature_reserve|marina|swimming_pool|golf_course|water_park"](around:${r},${lat},${lng});
+  node["sport"~"hiking|cycling|kayak|kayaking|canoe|canoeing|climbing|fishing|skiing|swimming|rafting|sailing|windsurfing|rowing"](around:${r},${lat},${lng});
+  node["tourism"~"attraction|viewpoint|theme_park|zoo|aquarium"](around:${r},${lat},${lng});
+  node["tourism"~"camp_site|caravan_site|boat_tour"](around:${r},${lat},${lng});
+  node["leisure"="camp_site"](around:${r},${lat},${lng});
+  node["amenity"~"boat_rental"](around:${r},${lat},${lng});
+  node["natural"~"waterfall|beach|peak|hot_spring|cave_entrance"](around:${r},${lat},${lng});
+  node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift|waterfall"](around:${r},${lat},${lng});
+  node["name"~"cruise|cruises|kayak|canoe|paddle|boat.?tour|raft|zip.?line|scenic.?ride",i](around:${r},${lat},${lng});
+);
+out ${limit * 2};`
+  const elements = await overpassQuery(ql)
+  return parseSurroundingsElements(elements, city, limit)
+}
+
 // ─── OSM Hotels (free, no key) ───────────────────────────────────────────────
 // Star rating + type-based price estimation — ported from TREK pattern.
 
@@ -351,12 +449,38 @@ export const agentTools = {
         }
       })
 
+      // Auto-populate surroundings ONLY for water-adjacent stops (lakes, rivers, harbors)
+      // so cruise/kayak activities appear without waiting for a separate explore_surroundings call.
+      // Hard cap of 5s per query so we don't consume the 30s edge budget that
+      // search_attractions and search_hotels need.
+      const surroundingsByCity: Record<string, Attraction[]> = {}
+      const waterStops = stops.slice(1).filter(s => isWaterAdjacent(s.coordinates.lat, s.coordinates.lng, s.city))
+      await Promise.all(
+        waterStops.map(async s => {
+          try {
+            const timeout = new Promise<Attraction[]>((_, reject) =>
+              setTimeout(() => reject(new Error('auto-surr timeout')), 8000)
+            )
+            // limit=4, qlTimeout=6s — keeps the Overpass query fast within edge budget
+            const surr = await Promise.race([
+              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 4, 6),
+              timeout,
+            ])
+            if (surr.length > 0) surroundingsByCity[s.city] = surr
+          } catch { /* silent — surroundings are non-critical */ }
+        })
+      )
+
       return {
         stops,
-        routeGeometry: orsResult?.geometry ?? null,  // [lat, lng][] for Leaflet
+        routeGeometry: orsResult?.geometry ?? null,
         totalDistance: orsResult ? metersToMiles(orsResult.totalDistance) : null,
         totalDuration: orsResult ? secondsToTime(orsResult.totalDuration) : null,
         message: `Route planned: ${cities.join(' → ')}`,
+        // Canonical city names — use EXACTLY these strings in all follow-up tool calls
+        // (search_attractions, search_hotels, explore_surroundings) to avoid city name mismatch.
+        canonicalCities: stops.map(s => s.city),
+        surroundingsByCity,
       }
     },
   }),
@@ -512,90 +636,17 @@ export const agentTools = {
           console.error('Foursquare surroundings failed, falling back to OSM:', err)
         }
       }
-      // Fallback: OSM outdoor/leisure POIs via Overpass (fast grouped tilde queries)
+      // Fallback: OSM outdoor/leisure POIs via Overpass (shared function — same as suggest_route_stops auto-populate)
       try {
         const coords = await resolveCityCoords(city)
         if (!coords) return { surroundings: [], city, activities }
-        const { lat, lng } = coords
-        const r = 30000  // 30 km radius for outdoor activities
-        const ql = `[out:json][timeout:15];
-(
-  node["leisure"~"park|nature_reserve|marina|swimming_pool|golf_course|water_park"](around:${r},${lat},${lng});
-  node["sport"~"hiking|cycling|kayak|kayaking|canoe|canoeing|climbing|fishing|skiing|swimming|rafting|sailing|windsurfing|rowing"](around:${r},${lat},${lng});
-  node["tourism"~"attraction|viewpoint|theme_park|zoo|aquarium"](around:${r},${lat},${lng});
-  node["tourism"~"camp_site|caravan_site|boat_tour"](around:${r},${lat},${lng});
-  node["leisure"="camp_site"](around:${r},${lat},${lng});
-  node["amenity"~"boat_rental"](around:${r},${lat},${lng});
-  node["natural"~"waterfall|beach|peak|hot_spring|cave_entrance"](around:${r},${lat},${lng});
-  node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift|waterfall"](around:${r},${lat},${lng});
-);
-out ${limit * 2};`
-        const elements = await overpassQuery(ql)
-        const seen = new Set<string>()
-        const surroundings: Attraction[] = []
-        for (const el of elements) {
-          const elLat = el.lat ?? el.center?.lat
-          const elLng = el.lon ?? el.center?.lon
-          const tags = el.tags ?? {}
-          const name = tags.name ?? tags['name:en'] ?? tags.brand
-          if (!elLat || !elLng || !name || seen.has(name)) continue
-          seen.add(name)
-          // For generic tourism=attraction, infer category from name keywords
-          const nameLower = (name ?? '').toLowerCase()
-          const inferredCat =
-            tags.tourism === 'attraction' ? (
-              /cruise|boat.?tour|ship|sail|ferry|charter/.test(nameLower) ? 'Boat Tour / Cruise' :
-              /kayak|canoe|paddle/.test(nameLower) ? 'Kayaking' :
-              /zip.?line|canopy|aerial/.test(nameLower) ? 'Zip Line' :
-              /horse|equestri/.test(nameLower) ? 'Horseback Riding' :
-              /climb|rappel/.test(nameLower) ? 'Rock Climbing' :
-              /raft|tubing|float/.test(nameLower) ? 'Rafting' :
-              /waterfall|falls/.test(nameLower) ? 'Waterfall' :
-              /hike|trail|scenic/.test(nameLower) ? 'Hiking / Scenic' :
-              'Attraction'
-            ) : null
-          const cat = inferredCat ??
-            (tags.amenity === 'boat_rental' ? 'Boat / Kayak Rental' :
-            tags.tourism === 'boat_tour' ? 'Boat Tour' :
-            tags.tourism === 'camp_site' || tags.leisure === 'camp_site' ? 'Campground' :
-            tags.tourism === 'caravan_site' ? 'RV Park' :
-            tags.attraction === 'boat_tour' ? 'Boat Tour' :
-            tags.attraction === 'scenic_railway' ? 'Scenic Train Ride' :
-            tags.attraction === 'zip_line' ? 'Zip Line' :
-            tags.attraction === 'gondola_lift' || tags.attraction === 'chair_lift' ? 'Scenic Gondola / Tram' :
-            tags.attraction === 'waterfall' ? 'Waterfall' :
-            tags.natural === 'waterfall' ? 'Waterfall' :
-            tags.natural === 'beach' ? 'Beach' :
-            tags.natural === 'peak' ? 'Mountain Peak' :
-            tags.natural === 'hot_spring' ? 'Hot Spring' :
-            tags.natural === 'cave_entrance' ? 'Cave' :
-            tags.sport === 'kayak' || tags.sport === 'kayaking' || tags.sport === 'canoe' || tags.sport === 'canoeing' ? 'Kayaking & Canoeing' :
-            tags.sport === 'sailing' || tags.sport === 'rowing' || tags.sport === 'windsurfing' ? 'Water Sports' :
-            tags.sport === 'climbing' ? 'Rock Climbing' :
-            tags.sport === 'rafting' ? 'Rafting' :
-            tags.sport === 'fishing' ? 'Fishing' :
-            tags.sport === 'skiing' ? 'Skiing' :
-            tags.sport ? tags.sport.charAt(0).toUpperCase() + tags.sport.slice(1) :
-            tags.leisure === 'nature_reserve' ? 'Nature Reserve' :
-            tags.leisure === 'marina' ? 'Marina' :
-            tags.leisure === 'water_park' ? 'Water Park' :
-            tags.leisure ? tags.leisure.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) :
-            'Outdoor Activity')
-          surroundings.push({
-            id: `osm-${el.type}-${el.id}`,
-            name,
-            category: cat,
-            address: osmAddress(tags, city),
-            coordinates: { lat: elLat, lng: elLng },
-            website: tags.website ?? tags['contact:website'],
-          })
-          if (surroundings.length >= limit) break
-        }
+        const surroundings = await osmSurroundingsQuery(coords.lat, coords.lng, city, limit)
         return { surroundings, city, activities }
       } catch (err) {
         console.error('OSM surroundings failed:', err)
         return { surroundings: [], city, activities }
       }
+
     },
   }),
 
@@ -674,9 +725,9 @@ Your personality:
 TOOL CALL ORDER — always follow this sequence exactly, never skip a step:
 1. **Plan immediately** — user gives origin + destination → start planning, no clarifying questions. Defaults: today's date, 2 adults, 1-2 stops for trips under 10 hours.
 2. Pick a realistic route with 1-3 intermediate stops (max 4-6 hour drive segments per day).
-3. Call **suggest_route_stops** first.
-4. Call **search_attractions** for every stop.
-5. Call **search_hotels** for every stop.
+3. Call **suggest_route_stops** first. It returns canonicalCities — use those EXACT strings as the city param in all follow-up calls.
+4. Call **search_attractions** for every stop using the canonical city name from step 3.
+5. Call **search_hotels** for every stop using the canonical city name from step 3.
 6. Call **explore_surroundings** for EVERY intermediate stop and the destination — this is mandatory, not optional. Pick activities by geography:
    - Great Lakes / Lake Superior / rivers / canals / harbors → cruise, boat_tour, kayaking, fishing, boating, swimming
    - Coastal/bay cities → cruise, boat_tour, kayaking, fishing, swimming

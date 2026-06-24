@@ -74,6 +74,8 @@ const US_MAJOR_CITIES: Record<string, CityInfo> = {
   'Ann Arbor': { lat: 42.2808, lng: -83.7430, state: 'MI' },
   'Flint': { lat: 43.0125, lng: -83.6875, state: 'MI' },
   'Traverse City': { lat: 44.7631, lng: -85.6206, state: 'MI' },
+  'Northville': { lat: 42.4312, lng: -83.4832, state: 'MI' },
+  'Northville MI': { lat: 42.4312, lng: -83.4832, state: 'MI' },
   'Marquette': { lat: 46.5436, lng: -87.3954, state: 'MI' },
   'Munising': { lat: 46.4110, lng: -86.6490, state: 'MI' },
   'Pictured Rocks': { lat: 46.4110, lng: -86.6490, state: 'MI' },

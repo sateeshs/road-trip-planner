@@ -3,6 +3,8 @@
 import { useEffect, useRef } from 'react'
 import type { Message } from 'ai'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import Spinner from './shared/Spinner'
 
 interface ChatPanelProps {
@@ -83,8 +85,49 @@ export default function ChatPanel({
                 <p className="text-xs font-medium text-gray-400 mb-1">AI Assistant</p>
               )}
               {m.role === 'assistant' ? (
-                <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-headings:my-1 prose-strong:font-bold prose-a:text-blue-600">
-                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                <div className="text-sm leading-relaxed space-y-1.5">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
+                    components={{
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      h1: ({ node, ..._ }) => <h1 className="text-base font-bold text-gray-900 mt-3 mb-1 border-b border-gray-200 pb-1">{_.children}</h1>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      h2: ({ node, ..._ }) => <h2 className="text-sm font-bold text-gray-900 mt-2.5 mb-1">{_.children}</h2>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      h3: ({ node, ..._ }) => <h3 className="text-sm font-semibold text-gray-800 mt-2 mb-0.5">{_.children}</h3>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      p: ({ node, ..._ }) => <p className="my-1 leading-relaxed">{_.children}</p>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      ul: ({ node, ..._ }) => <ul className="my-1 ml-4 space-y-0.5 list-disc">{_.children}</ul>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      ol: ({ node, ..._ }) => <ol className="my-1 ml-4 space-y-0.5 list-decimal">{_.children}</ol>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      li: ({ node, ..._ }) => <li className="leading-snug">{_.children}</li>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      strong: ({ node, ..._ }) => <strong className="font-semibold text-gray-900">{_.children}</strong>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      em: ({ node, ..._ }) => <em className="italic text-gray-700">{_.children}</em>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      a: ({ node, ..._ }) => <a href={_.href} className="text-blue-600 underline hover:text-blue-800" target="_blank" rel="noopener noreferrer">{_.children}</a>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      blockquote: ({ node, ..._ }) => <blockquote className="border-l-2 border-blue-400 pl-3 my-1 text-gray-600 italic">{_.children}</blockquote>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      code: ({ node, className, children, ..._ }) => className
+                        ? <code className="block bg-gray-800 text-green-300 text-xs rounded-lg p-2 my-1 overflow-x-auto">{children}</code>
+                        : <code className="bg-gray-200 text-gray-800 text-xs rounded px-1 py-0.5">{children}</code>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      table: ({ node, ..._ }) => <div className="overflow-x-auto my-2"><table className="w-full text-xs border-collapse border border-gray-300 rounded">{_.children}</table></div>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      thead: ({ node, ..._ }) => <thead className="bg-blue-50">{_.children}</thead>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      th: ({ node, ..._ }) => <th className="border border-gray-300 px-2 py-1.5 text-left font-semibold text-gray-700">{_.children}</th>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      td: ({ node, ..._ }) => <td className="border border-gray-300 px-2 py-1.5 text-gray-700">{_.children}</td>,
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      hr: ({ node, ..._ }) => <hr className="my-2 border-gray-200" />,
+                    }}
+                  >{m.content}</ReactMarkdown>
                 </div>
               ) : (
                 <p className="whitespace-pre-wrap">{m.content}</p>
