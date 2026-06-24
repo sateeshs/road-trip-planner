@@ -85,8 +85,32 @@ export default function ChatPanel({
                 <p className="text-xs font-medium text-gray-400 mb-1">AI Assistant</p>
               )}
               {m.role === 'assistant' ? (
-                <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-headings:my-1 prose-strong:font-bold prose-a:text-blue-600 prose-table:text-xs prose-th:bg-gray-200 prose-th:px-2 prose-th:py-1 prose-td:px-2 prose-td:py-1 prose-td:border prose-th:border prose-table:border-collapse">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown>
+                <div className="text-sm leading-relaxed space-y-1.5">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
+                    components={{
+                      h1: ({ children }) => <h1 className="text-base font-bold text-gray-900 mt-3 mb-1 border-b border-gray-200 pb-1">{children}</h1>,
+                      h2: ({ children }) => <h2 className="text-sm font-bold text-gray-900 mt-2.5 mb-1">{children}</h2>,
+                      h3: ({ children }) => <h3 className="text-sm font-semibold text-gray-800 mt-2 mb-0.5">{children}</h3>,
+                      p: ({ children }) => <p className="my-1 leading-relaxed">{children}</p>,
+                      ul: ({ children }) => <ul className="my-1 ml-4 space-y-0.5 list-disc">{children}</ul>,
+                      ol: ({ children }) => <ol className="my-1 ml-4 space-y-0.5 list-decimal">{children}</ol>,
+                      li: ({ children }) => <li className="leading-snug">{children}</li>,
+                      strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                      em: ({ children }) => <em className="italic text-gray-700">{children}</em>,
+                      a: ({ href, children }) => <a href={href} className="text-blue-600 underline hover:text-blue-800" target="_blank" rel="noopener noreferrer">{children}</a>,
+                      blockquote: ({ children }) => <blockquote className="border-l-2 border-blue-400 pl-3 my-1 text-gray-600 italic">{children}</blockquote>,
+                      code: ({ children, className }) => className
+                        ? <code className="block bg-gray-800 text-green-300 text-xs rounded-lg p-2 my-1 overflow-x-auto">{children}</code>
+                        : <code className="bg-gray-200 text-gray-800 text-xs rounded px-1 py-0.5">{children}</code>,
+                      table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full text-xs border-collapse border border-gray-300 rounded">{children}</table></div>,
+                      thead: ({ children }) => <thead className="bg-blue-50">{children}</thead>,
+                      th: ({ children }) => <th className="border border-gray-300 px-2 py-1.5 text-left font-semibold text-gray-700">{children}</th>,
+                      td: ({ children }) => <td className="border border-gray-300 px-2 py-1.5 text-gray-700">{children}</td>,
+                      hr: () => <hr className="my-2 border-gray-200" />,
+                    }}
+                  >{m.content}</ReactMarkdown>
                 </div>
               ) : (
                 <p className="whitespace-pre-wrap">{m.content}</p>
