@@ -24,14 +24,13 @@ export default function AttractionCard({ attraction, onSave, saved }: Attraction
           {onSave && (
             <button
               onClick={onSave}
-              title={saved ? 'Saved to plan' : 'Save to plan'}
-              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs transition-colors ${
+              className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full border transition-colors ${
                 saved
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'bg-gray-100 text-gray-400 hover:bg-blue-50 hover:text-blue-500'
+                  ? 'bg-blue-50 text-blue-600 border-blue-200'
+                  : 'bg-white text-gray-500 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
               }`}
             >
-              {saved ? '✓' : '+'}
+              {saved ? '✓ Saved' : '+ Save'}
             </button>
           )}
         </div>
