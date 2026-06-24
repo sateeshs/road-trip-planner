@@ -280,9 +280,9 @@ function parseSurroundingsElements(elements: OsmElement[], city: string, limit: 
 }
 
 /** Query OSM for outdoor/activity POIs around a lat/lng. Used by explore_surroundings and suggest_route_stops. */
-async function osmSurroundingsQuery(lat: number, lng: number, city: string, limit = 8): Promise<Attraction[]> {
+async function osmSurroundingsQuery(lat: number, lng: number, city: string, limit = 8, qlTimeout = 15): Promise<Attraction[]> {
   const r = 30000
-  const ql = `[out:json][timeout:15];
+  const ql = `[out:json][timeout:${qlTimeout}];
 (
   node["leisure"~"park|nature_reserve|marina|swimming_pool|golf_course|water_park"](around:${r},${lat},${lng});
   node["sport"~"hiking|cycling|kayak|kayaking|canoe|canoeing|climbing|fishing|skiing|swimming|rafting|sailing|windsurfing|rowing"](around:${r},${lat},${lng});
@@ -459,10 +459,11 @@ export const agentTools = {
         waterStops.map(async s => {
           try {
             const timeout = new Promise<Attraction[]>((_, reject) =>
-              setTimeout(() => reject(new Error('auto-surr timeout')), 5000)
+              setTimeout(() => reject(new Error('auto-surr timeout')), 8000)
             )
+            // limit=4, qlTimeout=6s — keeps the Overpass query fast within edge budget
             const surr = await Promise.race([
-              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 5),
+              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 4, 6),
               timeout,
             ])
             if (surr.length > 0) surroundingsByCity[s.city] = surr
