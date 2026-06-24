@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import type { Message } from 'ai'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import Spinner from './shared/Spinner'
 
 interface ChatPanelProps {
@@ -85,7 +86,7 @@ export default function ChatPanel({
               )}
               {m.role === 'assistant' ? (
                 <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-headings:my-1 prose-strong:font-bold prose-a:text-blue-600 prose-table:text-xs prose-th:bg-gray-200 prose-th:px-2 prose-th:py-1 prose-td:px-2 prose-td:py-1 prose-td:border prose-th:border prose-table:border-collapse">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown>
                 </div>
               ) : (
                 <p className="whitespace-pre-wrap">{m.content}</p>
