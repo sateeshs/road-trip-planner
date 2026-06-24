@@ -89,6 +89,12 @@ export interface TripContextValue {
   addToPlan: (attraction: Attraction, stop: RouteStop, type: 'attraction' | 'outdoor') => void
   removeFromPlan: (id: string) => void
   isInPlan: (id: string) => boolean
+
+  // Collaboration / persistence
+  tripId: string | null
+  membersCount: number
+  saveTripToDb: () => Promise<void>
+  loadTripFromDb: (id: string) => Promise<void>
 }
 
 // ─── Context ────────────────────────────────────────────────────────────────
@@ -153,6 +159,11 @@ export function TripProvider({ children }: { children: ReactNode }) {
     } catch { return [] }
   })
   const [planOpen, setPlanOpen] = useState(false)
+
+  // ── Collaboration state ──
+  const [tripId, setTripId] = useState<string | null>(null)
+  const [membersCount, setMembersCount] = useState(1)
+  const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Persist plan to localStorage whenever it changes
   useEffect(() => {
@@ -383,6 +394,105 @@ export function TripProvider({ children }: { children: ReactNode }) {
     append({ role: 'user', content: msg }).finally(() => setIsOptimizing(false))
   }, [stops, append])
 
+  // ── Trip persistence ──
+
+  const saveTripToDb = useCallback(async () => {
+    // Require session (next-auth) — session is available via fetch /api/auth/session
+    const body = {
+      title: stops.length >= 2 ? `${stops[0].city} → ${stops[stops.length - 1].city}` : 'New Trip',
+      stops,
+      routeGeometry,
+      totalDistance,
+      totalDuration,
+      hotelsByCity,
+      attractionsByCity,
+      surroundingsByCity,
+      confirmedReservations,
+      planActivities,
+    }
+    try {
+      if (tripId) {
+        await fetch(`/api/trips/${tripId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      } else {
+        const res = await fetch('/api/trips', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const newId = data.trip?._id as string | undefined
+          if (newId) {
+            setTripId(newId)
+            // Update URL without reload
+            const url = new URL(window.location.href)
+            url.searchParams.set('trip', newId)
+            window.history.replaceState({}, '', url.toString())
+          }
+        }
+      }
+    } catch (err) {
+      console.error('saveTripToDb error:', err)
+    }
+  }, [tripId, stops, routeGeometry, totalDistance, totalDuration, hotelsByCity, attractionsByCity, surroundingsByCity, confirmedReservations, planActivities])
+
+  const loadTripFromDb = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/trips/${id}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const t = data.trip
+      if (!t) return
+      setTripId(id)
+      if (t.stops) setStops(t.stops as RouteStop[])
+      if (t.routeGeometry) setRouteGeometry(t.routeGeometry as RouteGeometry)
+      if (t.totalDistance) setTotalDistance(t.totalDistance as string)
+      if (t.totalDuration) setTotalDuration(t.totalDuration as string)
+      if (t.hotelsByCity) setHotelsByCity(t.hotelsByCity as Record<string, Hotel[]>)
+      if (t.attractionsByCity) setAttractionsByCity(t.attractionsByCity as Record<string, Attraction[]>)
+      if (t.surroundingsByCity) setSurroundingsByCity(t.surroundingsByCity as Record<string, Attraction[]>)
+      if (t.confirmedReservations) setConfirmedReservations(t.confirmedReservations as ConfirmedReservation[])
+      if (t.planActivities) setPlanActivities(t.planActivities as PlanActivity[])
+      // Members count = owner + members array length
+      const mc = 1 + (Array.isArray(t.members) ? t.members.length : 0)
+      setMembersCount(mc)
+    } catch (err) {
+      console.error('loadTripFromDb error:', err)
+    }
+  }, [])
+
+  // On mount: check for ?trip= URL param and load the trip
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    const tripParam = url.searchParams.get('trip')
+    if (tripParam) {
+      loadTripFromDb(tripParam)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Auto-save 3s after stops change (only when tripId is set or user is signed in with stops ≥ 2)
+  useEffect(() => {
+    if (stops.length < 2) return
+    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+    saveDebounceRef.current = setTimeout(() => {
+      // Only save if we already have a tripId (don't auto-create trips silently —
+      // creation happens explicitly via saveTripToDb called by user action)
+      if (tripId) {
+        saveTripToDb()
+      }
+    }, 3000)
+    return () => {
+      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stops, tripId])
+
   const addToPlan = useCallback((attraction: Attraction, stop: RouteStop, type: 'attraction' | 'outdoor') => {
     setPlanActivities(prev => {
       if (prev.some(a => a.id === attraction.id)) return prev  // already saved
@@ -467,6 +577,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
     addToPlan,
     removeFromPlan,
     isInPlan,
+    tripId,
+    membersCount,
+    saveTripToDb,
+    loadTripFromDb,
   }
 
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>

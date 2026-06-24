@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { TripProvider, useTripContext } from '@/contexts/TripContext'
 import ChatPanel from '@/components/ChatPanel'
 import MapView from '@/components/MapView'
@@ -9,6 +10,7 @@ import MapSuggestions from '@/components/MapSuggestions'
 import BookingReviewModal from '@/components/BookingReviewModal'
 import ItineraryPanel from '@/components/ItineraryPanel'
 import PlanPanel from '@/components/PlanPanel'
+import TripMembersPanel from '@/components/TripMembersPanel'
 import type { Hotel, HotelOffer } from '@/types'
 
 export default function HomePage() {
@@ -61,7 +63,12 @@ function TripLayout() {
     planOpen,
     setPlanOpen,
     removeFromPlan,
+    tripId,
+    membersCount,
+    saveTripToDb,
   } = useTripContext()
+
+  const [membersOpen, setMembersOpen] = useState(false)
 
   function handleSuggestionSelect(text: string) {
     setInput(text)
@@ -121,7 +128,14 @@ function TripLayout() {
         totalDistance={totalDistance}
         totalDuration={totalDuration}
         bookingCount={confirmedReservations.length}
+        membersCount={membersCount}
         onItineraryClick={() => setItineraryOpen(true)}
+        onMembersClick={() => {
+          if (stops.length >= 2 && !tripId) {
+            saveTripToDb()
+          }
+          setMembersOpen(true)
+        }}
       />
 
       {/* Quick suggestion chips (bottom-center, only when no messages) */}
@@ -223,6 +237,13 @@ function TripLayout() {
         onClose={() => setItineraryOpen(false)}
         onCancel={handleCancelReservation}
         onStatusChange={handleReservationStatusChange}
+      />
+
+      {/* Trip members / sharing panel */}
+      <TripMembersPanel
+        tripId={tripId}
+        open={membersOpen}
+        onClose={() => setMembersOpen(false)}
       />
     </div>
   )
