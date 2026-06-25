@@ -12,6 +12,8 @@ import ItineraryPanel from '@/components/ItineraryPanel'
 import PlanPanel from '@/components/PlanPanel'
 import TripMembersPanel from '@/components/TripMembersPanel'
 import RouteOptionsCard from '@/components/RouteOptionsCard'
+import CorridorStopsPanel from '@/components/CorridorStopsPanel'
+import { useCorridorStops } from '@/hooks/useCorridorStops'
 import type { Hotel, HotelOffer } from '@/types'
 
 export default function HomePage() {
@@ -73,9 +75,26 @@ function TripLayout() {
     tripId,
     membersCount,
     saveTripToDb,
+    append,
   } = useTripContext()
 
   const [membersOpen, setMembersOpen] = useState(false)
+
+  // Phase 7: corridor opportunistic stops
+  const corridorStops = useCorridorStops(routeGeometry, stops)
+
+  function handleAddCorridorStop(stop: import('@/hooks/useCorridorStops').CorridorStop) {
+    const origin = stops[0]
+    const dest   = stops[stops.length - 1]
+    append({
+      role: 'user',
+      content:
+        `Add ${stop.name} as a stop on my route. ` +
+        `It's a ${stop.category.toLowerCase()} located about ${stop.distanceMiles} miles off the main corridor ` +
+        `between ${origin.city} and ${dest.city}. ` +
+        `Please insert it at the best position in the itinerary and recalculate everything.`,
+    })
+  }
 
   function handleSuggestionSelect(text: string) {
     setInput(text)
@@ -144,6 +163,14 @@ function TripLayout() {
           setMembersOpen(true)
         }}
       />
+
+      {/* Phase 7: On Your Way corridor suggestions */}
+      {corridorStops.length > 0 && (
+        <CorridorStopsPanel
+          stops={corridorStops}
+          onAdd={handleAddCorridorStop}
+        />
+      )}
 
       {/* Quick suggestion chips (bottom-center, only when no messages) */}
       {messages.length === 0 && (
