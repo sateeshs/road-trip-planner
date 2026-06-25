@@ -374,20 +374,93 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [selectedStop])
 
   const handleOptimizeRoute = useCallback(async () => {
-    if (stops.length < 3) return  // need at least 1 intermediate to optimize
+    if (stops.length < 2) return
     const origin = stops[0]
     const destination = stops[stops.length - 1]
     const intermediates = stops.slice(1, -1)
 
-    // Build OSRM time matrix for all stops (origin + intermediates + destination)
-    const matrixStops = stops.map(s => ({
-      id: s.city,
-      lat: s.coordinates.lat,
-      lng: s.coordinates.lng,
-    }))
-
     setIsOptimizing(true)
     try {
+      // ── Phase 5: branch by intermediate count ──────────────────────────────
+
+      // 0 intermediates — ask LLM to suggest the best stops for this corridor
+      if (intermediates.length === 0) {
+        append({
+          role: 'user',
+          content:
+            `I'm planning a road trip from ${origin.city}, ${origin.state} to ${destination.city}, ${destination.state}. ` +
+            `Please suggest the best 1–3 intermediate stops to make this a great road trip. ` +
+            `Pick stops that are well-positioned along the route corridor, have interesting attractions, and good hotel options. ` +
+            `Then plan the full itinerary with your recommended stops.`,
+        })
+        return
+      }
+
+      // 1 intermediate — score it; send AI message based on quality
+      if (intermediates.length === 1) {
+        const stop = intermediates[0]
+        const [score] = scoreStops({
+          stops: [{
+            id: stop.city,
+            lat: stop.coordinates.lat,
+            lng: stop.coordinates.lng,
+            attractionCount: attractionsByCity[stop.city]?.length ?? 0,
+            hotelCount: hotelsByCity[stop.city]?.length ?? 0,
+            avgHotelPrice: (() => {
+              const h = hotelsByCity[stop.city]
+              if (!h || h.length === 0) return 0
+              const prices = h.map(x => x.pricePerNight ?? 0).filter(p => p > 0)
+              return prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
+            })(),
+          }],
+          origin: { lat: origin.coordinates.lat, lng: origin.coordinates.lng },
+          destination: { lat: destination.coordinates.lat, lng: destination.coordinates.lng },
+          routeGeometry: routeGeometry ?? undefined,
+        })
+
+        const isWellPositioned = score.totalScore >= 55
+        const corridorNote = score.breakdown.corridorAlignment < 35
+          ? `The stop appears to be significantly off the main driving corridor (alignment score: ${score.breakdown.corridorAlignment}/100).`
+          : score.breakdown.corridorAlignment < 55
+            ? `The stop is somewhat off the main corridor (alignment score: ${score.breakdown.corridorAlignment}/100).`
+            : ''
+
+        if (isWellPositioned) {
+          append({
+            role: 'user',
+            content:
+              `My route is ${origin.city} → ${stop.city} → ${destination.city}. ` +
+              `${stop.city} scores ${score.totalScore}/100 for stop quality (attractions: ${score.breakdown.attractionDensity}/100, ` +
+              `hotels: ${score.breakdown.hotelQuality}/100, corridor fit: ${score.breakdown.corridorAlignment}/100). ` +
+              `This looks like a solid stop. Please confirm this is a good routing choice and recalculate the complete itinerary.`,
+          })
+        } else {
+          append({
+            role: 'user',
+            content:
+              `I'm considering ${origin.city} → ${stop.city} → ${destination.city}. ` +
+              `${stop.city} scores ${score.totalScore}/100 for stop quality. ${corridorNote} ` +
+              `Attractions score: ${score.breakdown.attractionDensity}/100, hotels: ${score.breakdown.hotelQuality}/100. ` +
+              `Please evaluate whether ${stop.city} is worth the detour for what it offers, ` +
+              `or suggest a better-positioned alternative along this corridor. ` +
+              `Then recalculate the full itinerary with your recommendation.`,
+          })
+        }
+        return
+      }
+
+      // 2–8 intermediates — NSGA-II with standard parameters
+      // 9+ intermediates — NSGA-II with larger population + generations
+      const isLargeRoute = intermediates.length >= 9
+      const populationSize = isLargeRoute ? 200 : 120
+      const generations    = isLargeRoute ? 400 : 200
+
+      // Build OSRM time matrix for all stops
+      const matrixStops = stops.map(s => ({
+        id: s.city,
+        lat: s.coordinates.lat,
+        lng: s.coordinates.lng,
+      }))
       const timeMatrix = await getTimeMatrix(matrixStops).catch(() => null)
 
       const toStopWithId = (s: RouteStop) => ({
@@ -399,7 +472,6 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
       const candidatePool = intermediates.map(toStopWithId)
 
-      // Build attraction and hotel price maps
       const attractionCounts = new Map<string, number>(
         intermediates.map(s => [s.city, attractionsByCity[s.city]?.length ?? 0])
       )
@@ -414,7 +486,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
         intermediates.map(s => [s.city, s.stayNights ?? 1])
       )
 
-      // Phase 4: score candidate stops, use scores as sampling weights in NSGA-II
+      // Phase 4: score stops → weighted NSGA-II sampling
       const scores = scoreStops({
         stops: intermediates.map(s => ({
           id: s.city,
@@ -444,18 +516,17 @@ export function TripProvider({ children }: { children: ReactNode }) {
         hotelPriceByCity,
         stayNightsByCity,
         stopWeights,
+        populationSize,
+        generations,
       })
 
-      // Store scores for RouteOptionsCard quality badges
       const scoresMap = new Map(scores.map(s => [s.id, s]))
       setStopScores(scoresMap)
-
-      // Show RouteOptionsCard — don't trigger AI call yet
       setParetoRoutes(result)
     } finally {
       setIsOptimizing(false)
     }
-  }, [stops, attractionsByCity, hotelsByCity, routeGeometry])
+  }, [stops, attractionsByCity, hotelsByCity, routeGeometry, append])
 
   const handleSelectParetoRoute = useCallback((route: ParetoRoute) => {
     setParetoRoutes(null)
