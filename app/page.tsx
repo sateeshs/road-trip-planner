@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { TripProvider, useTripContext } from '@/contexts/TripContext'
 import ChatPanel from '@/components/ChatPanel'
 import MapView from '@/components/MapView'
@@ -8,6 +9,9 @@ import FloatingRouteSummary from '@/components/FloatingRouteSummary'
 import MapSuggestions from '@/components/MapSuggestions'
 import BookingReviewModal from '@/components/BookingReviewModal'
 import ItineraryPanel from '@/components/ItineraryPanel'
+import PlanPanel from '@/components/PlanPanel'
+import TripMembersPanel from '@/components/TripMembersPanel'
+import RouteOptionsCard from '@/components/RouteOptionsCard'
 import type { Hotel, HotelOffer } from '@/types'
 
 export default function HomePage() {
@@ -56,7 +60,22 @@ function TripLayout() {
     handleConfirmBooking,
     handleCancelReservation,
     handleReservationStatusChange,
+    paretoRoutes,
+    setParetoRoutes,
+    handleSelectParetoRoute,
+    stopScores,
+    userBudget,
+    setUserBudget,
+    planActivities,
+    planOpen,
+    setPlanOpen,
+    removeFromPlan,
+    tripId,
+    membersCount,
+    saveTripToDb,
   } = useTripContext()
+
+  const [membersOpen, setMembersOpen] = useState(false)
 
   function handleSuggestionSelect(text: string) {
     setInput(text)
@@ -116,7 +135,14 @@ function TripLayout() {
         totalDistance={totalDistance}
         totalDuration={totalDuration}
         bookingCount={confirmedReservations.length}
+        membersCount={membersCount}
         onItineraryClick={() => setItineraryOpen(true)}
+        onMembersClick={() => {
+          if (stops.length >= 2 && !tripId) {
+            saveTripToDb()
+          }
+          setMembersOpen(true)
+        }}
       />
 
       {/* Quick suggestion chips (bottom-center, only when no messages) */}
@@ -202,6 +228,14 @@ function TripLayout() {
         />
       )}
 
+      {/* Activity plan panel */}
+      <PlanPanel
+        activities={planActivities}
+        open={planOpen}
+        onClose={() => setPlanOpen(false)}
+        onRemove={removeFromPlan}
+      />
+
       {/* Itinerary panel */}
       <ItineraryPanel
         reservations={confirmedReservations}
@@ -211,6 +245,25 @@ function TripLayout() {
         onCancel={handleCancelReservation}
         onStatusChange={handleReservationStatusChange}
       />
+
+      {/* Trip members / sharing panel */}
+      <TripMembersPanel
+        tripId={tripId}
+        open={membersOpen}
+        onClose={() => setMembersOpen(false)}
+      />
+
+      {/* NSGA-II Pareto route options overlay */}
+      {paretoRoutes && (
+        <RouteOptionsCard
+          routes={paretoRoutes}
+          onSelect={handleSelectParetoRoute}
+          onDismiss={() => setParetoRoutes(null)}
+          stopScores={stopScores}
+          userBudget={userBudget}
+          onBudgetChange={setUserBudget}
+        />
+      )}
     </div>
   )
 }

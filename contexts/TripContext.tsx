@@ -3,11 +3,14 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { useChat } from 'ai/react'
 import type { BookingSummary } from '@/components/BookingReviewModal'
-import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, ConfirmedReservation } from '@/types'
+import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, ConfirmedReservation, PlanActivity } from '@/types'
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 import { reverseGeocode } from '@/lib/route-utils'
-import { optimizeRoute } from '@/lib/route-optimizer'
+import { optimizeRoute, runNSGAII } from '@/lib/route-optimizer'
+import type { ParetoRoute } from '@/lib/route-optimizer'
+import { getTimeMatrix } from '@/lib/osrm-client'
+import { scoreStops, buildStopWeights } from '@/lib/stop-scorer'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import type { Message } from 'ai'
 
@@ -80,8 +83,28 @@ export interface TripContextValue {
   handleConfirmBooking: (summary: BookingSummary) => void
   handleCancelReservation: (id: string) => void
   handleReservationStatusChange: (id: string, status: ConfirmedReservation['status']) => void
-  handleOptimizeRoute: () => void
+  handleOptimizeRoute: () => Promise<void>
   isOptimizing: boolean
+  paretoRoutes: ParetoRoute[] | null
+  setParetoRoutes: (r: ParetoRoute[] | null) => void
+  handleSelectParetoRoute: (route: ParetoRoute) => void
+  stopScores: Map<string, import('@/lib/stop-scorer').StopScore> | null
+  // Phase 6: user budget
+  userBudget: number | null
+  setUserBudget: (b: number | null) => void
+  // Activity plan (TREK "place pool" concept, client-side)
+  planActivities: PlanActivity[]
+  planOpen: boolean
+  setPlanOpen: (open: boolean) => void
+  addToPlan: (attraction: Attraction, stop: RouteStop, type: 'attraction' | 'outdoor') => void
+  removeFromPlan: (id: string) => void
+  isInPlan: (id: string) => boolean
+
+  // Collaboration / persistence
+  tripId: string | null
+  membersCount: number
+  saveTripToDb: () => Promise<void>
+  loadTripFromDb: (id: string) => Promise<void>
 }
 
 // ─── Context ────────────────────────────────────────────────────────────────
@@ -139,6 +162,26 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [mapMenu, setMapMenu] = useState<MapMenu | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
+  const [paretoRoutes, setParetoRoutes] = useState<ParetoRoute[] | null>(null)
+  const [stopScores, setStopScores] = useState<Map<string, import('@/lib/stop-scorer').StopScore> | null>(null)
+  const [userBudget, setUserBudget] = useState<number | null>(null)
+  const [planActivities, setPlanActivities] = useState<PlanActivity[]>(() => {
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('rtp:plan') : null
+      return stored ? (JSON.parse(stored) as PlanActivity[]) : []
+    } catch { return [] }
+  })
+  const [planOpen, setPlanOpen] = useState(false)
+
+  // ── Collaboration state ──
+  const [tripId, setTripId] = useState<string | null>(null)
+  const [membersCount, setMembersCount] = useState(1)
+  const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Persist plan to localStorage whenever it changes
+  useEffect(() => {
+    try { localStorage.setItem('rtp:plan', JSON.stringify(planActivities)) } catch { /* quota exceeded */ }
+  }, [planActivities])
 
   // ── Proactive POIs ──
   const proactivePois = useProactivePlaces(stops)
@@ -148,19 +191,36 @@ export function TripProvider({ children }: { children: ReactNode }) {
     api: '/api/chat',
   })
 
+  // ── Keep a ref to latest stops so we can read them inside the effect
+  //    without adding `stops` to the dependency array (which would cause
+  //    infinite re-renders since we call setStops inside the effect).
+  const stopsRef = useRef<RouteStop[]>(stops)
+  stopsRef.current = stops
+
   // ── Process tool results from AI messages ──
   // AI SDK 4.x: tool results are in message.parts with type='tool-invocation', state='result'
   const processedIds = useRef(new Set<string>())
   useEffect(() => {
     for (const msg of messages) {
       if (processedIds.current.has(msg.id)) continue
-      const parts = (msg as {
-        parts?: Array<{
-          type: string
-          toolInvocation?: { toolName: string; state: string; result?: unknown }
-        }>
-      }).parts ?? []
+      type Part = { type: string; toolInvocation?: { toolName: string; state: string; result?: unknown } }
+      const parts = (msg as { parts?: Part[] }).parts ?? []
 
+      // ── Pass 1: collect new stops from suggest_route_stops so subsequent
+      //    tools (search_attractions, search_hotels) can do city-name fuzzy
+      //    matching without relying on React state that may not have committed yet.
+      let batchStops: RouteStop[] = stopsRef.current
+      for (const part of parts) {
+        if (part.type !== 'tool-invocation') continue
+        const ti = part.toolInvocation
+        if (!ti || ti.state !== 'result') continue
+        const result = ti.result as Record<string, unknown>
+        if (ti.toolName === 'suggest_route_stops' && result?.stops) {
+          batchStops = result.stops as RouteStop[]
+        }
+      }
+
+      // ── Pass 2: apply all tool results
       for (const part of parts) {
         if (part.type !== 'tool-invocation') continue
         const ti = part.toolInvocation
@@ -180,30 +240,25 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
         if (ti.toolName === 'search_hotels' && result?.hotels && result?.city) {
           const city = result.city as string
-          // Store under both the AI-provided name and the canonical stop city name
-          // (they can differ, e.g. AI uses "Munising" but stop city is "Pictured Rocks")
-          setStops(prev => {
-            const matchedStop = findMatchingStop(prev, city)
-            setHotelsByCity(h => ({
-              ...h,
-              [city]: result.hotels as Hotel[],
-              ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.hotels as Hotel[] } : {}),
-            }))
-            return prev
-          })
+          // Store under both the AI-provided city name AND the canonical stop city name
+          // so the bottom sheet finds data regardless of name drift (e.g. AI uses
+          // "Munising" but stop.city is "Pictured Rocks")
+          const matchedStop = findMatchingStop(batchStops, city)
+          setHotelsByCity(h => ({
+            ...h,
+            [city]: result.hotels as Hotel[],
+            ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.hotels as Hotel[] } : {}),
+          }))
         }
 
         if (ti.toolName === 'search_attractions' && result?.attractions && result?.city) {
           const city = result.city as string
-          setStops(prev => {
-            const matchedStop = findMatchingStop(prev, city)
-            setAttractionsByCity(a => ({
-              ...a,
-              [city]: result.attractions as Attraction[],
-              ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.attractions as Attraction[] } : {}),
-            }))
-            return prev
-          })
+          const matchedStop = findMatchingStop(batchStops, city)
+          setAttractionsByCity(a => ({
+            ...a,
+            [city]: result.attractions as Attraction[],
+            ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.attractions as Attraction[] } : {}),
+          }))
         }
 
         if (ti.toolName === 'explore_surroundings') {
@@ -322,35 +377,337 @@ export function TripProvider({ children }: { children: ReactNode }) {
     setItineraryOpen(true)
   }, [selectedStop])
 
-  const handleOptimizeRoute = useCallback(() => {
-    if (stops.length < 4) return  // need at least 2 intermediates to reorder
+  const handleOptimizeRoute = useCallback(async () => {
+    if (stops.length < 2) return
     const origin = stops[0]
     const destination = stops[stops.length - 1]
     const intermediates = stops.slice(1, -1)
 
-    // Reorder intermediates using nearest-neighbor + 2-opt (ported from TREK RouteCalculator)
-    const optimized = optimizeRoute(
-      intermediates.map(s => ({ ...s, lat: s.coordinates.lat, lng: s.coordinates.lng })),
-      {
-        start: { lat: origin.coordinates.lat, lng: origin.coordinates.lng },
-        end: { lat: destination.coordinates.lat, lng: destination.coordinates.lng },
-      }
-    )
+    setIsOptimizing(true)
+    try {
+      // ── Phase 5: branch by intermediate count ──────────────────────────────
 
-    const reorderedCities = [
+      // 0 intermediates — ask LLM to suggest the best stops for this corridor
+      if (intermediates.length === 0) {
+        append({
+          role: 'user',
+          content:
+            `I'm planning a road trip from ${origin.city}, ${origin.state} to ${destination.city}, ${destination.state}. ` +
+            `Please suggest the best 1–3 intermediate stops to make this a great road trip. ` +
+            `Pick stops that are well-positioned along the route corridor, have interesting attractions, and good hotel options. ` +
+            `Then plan the full itinerary with your recommended stops.`,
+        })
+        return
+      }
+
+      // 1 intermediate — score it; send AI message based on quality
+      if (intermediates.length === 1) {
+        const stop = intermediates[0]
+        const [score] = scoreStops({
+          stops: [{
+            id: stop.city,
+            lat: stop.coordinates.lat,
+            lng: stop.coordinates.lng,
+            attractionCount: attractionsByCity[stop.city]?.length ?? 0,
+            hotelCount: hotelsByCity[stop.city]?.length ?? 0,
+            avgHotelPrice: (() => {
+              const h = hotelsByCity[stop.city]
+              if (!h || h.length === 0) return 0
+              const prices = h.map(x => x.pricePerNight ?? 0).filter(p => p > 0)
+              return prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
+            })(),
+          }],
+          origin: { lat: origin.coordinates.lat, lng: origin.coordinates.lng },
+          destination: { lat: destination.coordinates.lat, lng: destination.coordinates.lng },
+          routeGeometry: routeGeometry ?? undefined,
+        })
+
+        const isWellPositioned = score.totalScore >= 55
+        const corridorNote = score.breakdown.corridorAlignment < 35
+          ? `The stop appears to be significantly off the main driving corridor (alignment score: ${score.breakdown.corridorAlignment}/100).`
+          : score.breakdown.corridorAlignment < 55
+            ? `The stop is somewhat off the main corridor (alignment score: ${score.breakdown.corridorAlignment}/100).`
+            : ''
+
+        if (isWellPositioned) {
+          append({
+            role: 'user',
+            content:
+              `My route is ${origin.city} → ${stop.city} → ${destination.city}. ` +
+              `${stop.city} scores ${score.totalScore}/100 for stop quality (attractions: ${score.breakdown.attractionDensity}/100, ` +
+              `hotels: ${score.breakdown.hotelQuality}/100, corridor fit: ${score.breakdown.corridorAlignment}/100). ` +
+              `This looks like a solid stop. Please confirm this is a good routing choice and recalculate the complete itinerary.`,
+          })
+        } else {
+          append({
+            role: 'user',
+            content:
+              `I'm considering ${origin.city} → ${stop.city} → ${destination.city}. ` +
+              `${stop.city} scores ${score.totalScore}/100 for stop quality. ${corridorNote} ` +
+              `Attractions score: ${score.breakdown.attractionDensity}/100, hotels: ${score.breakdown.hotelQuality}/100. ` +
+              `Please evaluate whether ${stop.city} is worth the detour for what it offers, ` +
+              `or suggest a better-positioned alternative along this corridor. ` +
+              `Then recalculate the full itinerary with your recommendation.`,
+          })
+        }
+        return
+      }
+
+      // 2–8 intermediates — NSGA-II with standard parameters
+      // 9+ intermediates — NSGA-II with larger population + generations
+      const isLargeRoute = intermediates.length >= 9
+      const populationSize = isLargeRoute ? 200 : 120
+      const generations    = isLargeRoute ? 400 : 200
+
+      // Build OSRM time matrix for all stops
+      const matrixStops = stops.map(s => ({
+        id: s.city,
+        lat: s.coordinates.lat,
+        lng: s.coordinates.lng,
+      }))
+      const timeMatrix = await getTimeMatrix(matrixStops).catch(() => null)
+
+      const toStopWithId = (s: RouteStop) => ({
+        ...s,
+        id: s.city,
+        lat: s.coordinates.lat,
+        lng: s.coordinates.lng,
+      })
+
+      const candidatePool = intermediates.map(toStopWithId)
+
+      const attractionCounts = new Map<string, number>(
+        intermediates.map(s => [s.city, attractionsByCity[s.city]?.length ?? 0])
+      )
+      const hotelPriceByCity = new Map<string, number>(
+        intermediates.map(s => {
+          const hotels = hotelsByCity[s.city]
+          const price = hotels && hotels.length > 0 ? hotels[0].pricePerNight ?? 120 : 120
+          return [s.city, price]
+        })
+      )
+      const stayNightsByCity = new Map<string, number>(
+        intermediates.map(s => [s.city, s.stayNights ?? 1])
+      )
+
+      // Phase 4: score stops → weighted NSGA-II sampling
+      const scores = scoreStops({
+        stops: intermediates.map(s => ({
+          id: s.city,
+          lat: s.coordinates.lat,
+          lng: s.coordinates.lng,
+          attractionCount: attractionsByCity[s.city]?.length ?? 0,
+          hotelCount: hotelsByCity[s.city]?.length ?? 0,
+          avgHotelPrice: (() => {
+            const h = hotelsByCity[s.city]
+            if (!h || h.length === 0) return 0
+            const prices = h.map(x => x.pricePerNight ?? 0).filter(p => p > 0)
+            return prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
+          })(),
+        })),
+        origin: { lat: origin.coordinates.lat, lng: origin.coordinates.lng },
+        destination: { lat: destination.coordinates.lat, lng: destination.coordinates.lng },
+        routeGeometry: routeGeometry ?? undefined,
+      })
+      const stopWeights = buildStopWeights(scores)
+
+      // Phase 6: activities cost per city ($25/saved activity)
+      const activitiesByCity = new Map<string, number>()
+      for (const act of planActivities) {
+        activitiesByCity.set(act.city, (activitiesByCity.get(act.city) ?? 0) + 1)
+      }
+
+      const result = runNSGAII({
+        candidatePool,
+        origin: toStopWithId(origin),
+        destination: toStopWithId(destination),
+        timeMatrix,
+        attractionCounts,
+        hotelPriceByCity,
+        stayNightsByCity,
+        stopWeights,
+        activitiesByCity,
+        populationSize,
+        generations,
+      })
+
+      const scoresMap = new Map(scores.map(s => [s.id, s]))
+      setStopScores(scoresMap)
+      setParetoRoutes(result)
+    } finally {
+      setIsOptimizing(false)
+    }
+  }, [stops, attractionsByCity, hotelsByCity, routeGeometry, planActivities, append])
+
+  const handleSelectParetoRoute = useCallback((route: ParetoRoute) => {
+    setParetoRoutes(null)
+    const origin = stops[0]
+    const destination = stops[stops.length - 1]
+
+    // Build city list from selected route
+    // Note: toStopWithId() sets id = s.city, so s.id is the city name
+    const cityList = [
       `${origin.city}, ${origin.state}`,
-      ...optimized.map(s => `${s.city}, ${s.state}`),
+      ...route.intermediates.map(s => {
+        // Look up the full city/state from existing stops by city name (= id)
+        const match = stops.find(stop => stop.city === s.id)
+        if (match) return `${match.city}, ${match.state}`
+        return s.id
+      }),
       `${destination.city}, ${destination.state}`,
     ]
 
-    const changed = optimized.some((s, i) => s.city !== intermediates[i].city)
-    const msg = changed
-      ? `Optimize my route — reorder stops to minimize driving. Recalculate the itinerary in this order: ${reorderedCities.join(' → ')}`
-      : `My route is already optimized: ${reorderedCities.join(' → ')}. Please confirm and show the current itinerary summary.`
-
-    setIsOptimizing(true)
-    append({ role: 'user', content: msg }).finally(() => setIsOptimizing(false))
+    append({
+      role: 'user',
+      content: `I selected the "${route.label}" route variant from the optimizer. Please recalculate the itinerary with these stops in order: ${cityList.join(' → ')}`,
+    })
   }, [stops, append])
+
+  // ── Trip persistence ──
+
+  const saveTripToDb = useCallback(async () => {
+    // Require session (next-auth) — session is available via fetch /api/auth/session
+    const body = {
+      title: stops.length >= 2 ? `${stops[0].city} → ${stops[stops.length - 1].city}` : 'New Trip',
+      stops,
+      routeGeometry,
+      totalDistance,
+      totalDuration,
+      hotelsByCity,
+      attractionsByCity,
+      surroundingsByCity,
+      confirmedReservations,
+      planActivities,
+    }
+    try {
+      if (tripId) {
+        await fetch(`/api/trips/${tripId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      } else {
+        const res = await fetch('/api/trips', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const newId = data.trip?._id as string | undefined
+          if (newId) {
+            setTripId(newId)
+            // Update URL without reload
+            const url = new URL(window.location.href)
+            url.searchParams.set('trip', newId)
+            window.history.replaceState({}, '', url.toString())
+          }
+        }
+      }
+    } catch (err) {
+      console.error('saveTripToDb error:', err)
+    }
+  }, [tripId, stops, routeGeometry, totalDistance, totalDuration, hotelsByCity, attractionsByCity, surroundingsByCity, confirmedReservations, planActivities])
+
+  const loadTripFromDb = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/trips/${id}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const t = data.trip
+      if (!t) return
+      setTripId(id)
+      if (t.stops) setStops(t.stops as RouteStop[])
+      if (t.routeGeometry) setRouteGeometry(t.routeGeometry as RouteGeometry)
+      if (t.totalDistance) setTotalDistance(t.totalDistance as string)
+      if (t.totalDuration) setTotalDuration(t.totalDuration as string)
+      if (t.hotelsByCity) setHotelsByCity(t.hotelsByCity as Record<string, Hotel[]>)
+      if (t.attractionsByCity) setAttractionsByCity(t.attractionsByCity as Record<string, Attraction[]>)
+      if (t.surroundingsByCity) setSurroundingsByCity(t.surroundingsByCity as Record<string, Attraction[]>)
+      if (t.confirmedReservations) setConfirmedReservations(t.confirmedReservations as ConfirmedReservation[])
+      if (t.planActivities) setPlanActivities(t.planActivities as PlanActivity[])
+      // Members count = owner + members array length
+      const mc = 1 + (Array.isArray(t.members) ? t.members.length : 0)
+      setMembersCount(mc)
+    } catch (err) {
+      console.error('loadTripFromDb error:', err)
+    }
+  }, [])
+
+  // On mount: check for ?trip= URL param and load the trip
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    const tripParam = url.searchParams.get('trip')
+    if (tripParam) {
+      loadTripFromDb(tripParam)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Auto-save 3s after stops change (only when tripId is set or user is signed in with stops ≥ 2)
+  useEffect(() => {
+    if (stops.length < 2) return
+    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+    saveDebounceRef.current = setTimeout(() => {
+      // Only save if we already have a tripId (don't auto-create trips silently —
+      // creation happens explicitly via saveTripToDb called by user action)
+      if (tripId) {
+        saveTripToDb()
+      }
+    }, 3000)
+    return () => {
+      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stops, tripId])
+
+  // Phase 6: detect budget mentions in user messages ("budget of $500", "only $1,000", etc.)
+  // Only updates if user hasn't manually overridden via setUserBudget.
+  useEffect(() => {
+    const userMessages = messages.filter(m => m.role === 'user')
+    if (userMessages.length === 0) return
+    const last = userMessages[userMessages.length - 1]
+    const text = typeof last.content === 'string' ? last.content : ''
+    const hasBudgetWord = /\b(budget|afford|spend|spending|cost|limit|total|max)\b/i.test(text)
+    if (!hasBudgetWord) return
+    const amounts = [...text.matchAll(/\$\s*([\d,]+)/g)]
+      .map(m => parseInt(m[1].replace(/,/g, ''), 10))
+      .filter(n => n >= 100)
+    if (amounts.length > 0) {
+      setUserBudget(Math.max(...amounts))
+    }
+  }, [messages])
+
+  const addToPlan = useCallback((attraction: Attraction, stop: RouteStop, type: 'attraction' | 'outdoor') => {
+    setPlanActivities(prev => {
+      if (prev.some(a => a.id === attraction.id)) return prev  // already saved
+      const activity: PlanActivity = {
+        id: attraction.id,
+        name: attraction.name,
+        category: attraction.category,
+        city: stop.city,
+        state: stop.state,
+        checkIn: stop.checkIn,
+        checkOut: stop.checkOut,
+        coordinates: attraction.coordinates,
+        address: attraction.address,
+        website: attraction.website,
+        type,
+        savedAt: new Date().toISOString(),
+      }
+      return [...prev, activity]
+    })
+    setPlanOpen(true)
+  }, [])
+
+  const removeFromPlan = useCallback((id: string) => {
+    setPlanActivities(prev => prev.filter(a => a.id !== id))
+  }, [])
+
+  const isInPlan = useCallback((id: string) => {
+    return planActivities.some(a => a.id === id)
+  }, [planActivities])
 
   const handleCancelReservation = useCallback((id: string) => {
     setConfirmedReservations(prev => prev.filter(r => r.id !== id))
@@ -400,6 +757,22 @@ export function TripProvider({ children }: { children: ReactNode }) {
     handleReservationStatusChange,
     handleOptimizeRoute,
     isOptimizing,
+    paretoRoutes,
+    setParetoRoutes,
+    handleSelectParetoRoute,
+    stopScores,
+    userBudget,
+    setUserBudget,
+    planActivities,
+    planOpen,
+    setPlanOpen,
+    addToPlan,
+    removeFromPlan,
+    isInPlan,
+    tripId,
+    membersCount,
+    saveTripToDb,
+    loadTripFromDb,
   }
 
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>

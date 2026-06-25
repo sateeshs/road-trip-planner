@@ -194,3 +194,61 @@ export function secondsToTime(seconds: number): string {
   if (h === 0) return `${m}m`
   return `${h}h ${m}m`
 }
+
+/**
+ * Fetches a pairwise drive-time matrix (in minutes) for all combinations of waypoints
+ * using OSRM's /table/v1/ endpoint — single HTTP call for N² pairs.
+ *
+ * Returns a Map keyed by sorted city pair: "[A|B]" → minutes
+ * The key is symmetric: getTimeMatrix().get(key(A,B)) === getTimeMatrix().get(key(B,A))
+ */
+export function timeMatrixKey(a: string, b: string): string {
+  return [a, b].sort().join('|')
+}
+
+export async function getTimeMatrix(
+  stops: Array<{ id: string; lat: number; lng: number }>
+): Promise<Map<string, number>> {
+  const matrix = new Map<string, number>()
+  if (stops.length < 2) return matrix
+
+  const coords = stops.map(s => `${s.lng},${s.lat}`).join(';')
+
+  // Try primary OSRM Table endpoint, fall back to demo server
+  const primaryUrl = `https://routing.openstreetmap.de/routed-car/table/v1/driving/${coords}?annotations=duration`
+  const fallbackUrl = `https://router.project-osrm.org/table/v1/driving/${coords}?annotations=duration`
+
+  let durations: number[][] | null = null
+
+  try {
+    const res = await fetch(primaryUrl, { signal: AbortSignal.timeout(8_000) })
+    if (res.ok) {
+      const data = await res.json() as { code: string; durations?: number[][] }
+      if (data.code === 'Ok' && data.durations) durations = data.durations
+    }
+  } catch { /* try fallback */ }
+
+  if (!durations) {
+    try {
+      const res = await fetch(fallbackUrl, { signal: AbortSignal.timeout(8_000) })
+      if (res.ok) {
+        const data = await res.json() as { code: string; durations?: number[][] }
+        if (data.code === 'Ok' && data.durations) durations = data.durations
+      }
+    } catch { /* return empty matrix — caller falls back to Haversine */ }
+  }
+
+  if (!durations) return matrix
+
+  // durations[i][j] = seconds from stop i to stop j
+  // We store symmetric pairs: key(i,j) → average of both directions (in minutes)
+  for (let i = 0; i < stops.length; i++) {
+    for (let j = i + 1; j < stops.length; j++) {
+      const seconds = (durations[i][j] + durations[j][i]) / 2
+      const minutes = seconds / 60
+      matrix.set(timeMatrixKey(stops[i].id, stops[j].id), minutes)
+    }
+  }
+
+  return matrix
+}
