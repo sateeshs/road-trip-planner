@@ -7,7 +7,8 @@ import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, Confirmed
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 import { reverseGeocode } from '@/lib/route-utils'
-import { optimizeRoute } from '@/lib/route-optimizer'
+import { optimizeRoute, runNSGAII } from '@/lib/route-optimizer'
+import type { ParetoRoute } from '@/lib/route-optimizer'
 import { getTimeMatrix } from '@/lib/osrm-client'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import type { Message } from 'ai'
@@ -83,6 +84,9 @@ export interface TripContextValue {
   handleReservationStatusChange: (id: string, status: ConfirmedReservation['status']) => void
   handleOptimizeRoute: () => Promise<void>
   isOptimizing: boolean
+  paretoRoutes: ParetoRoute[] | null
+  setParetoRoutes: (r: ParetoRoute[] | null) => void
+  handleSelectParetoRoute: (route: ParetoRoute) => void
   // Activity plan (TREK "place pool" concept, client-side)
   planActivities: PlanActivity[]
   planOpen: boolean
@@ -153,6 +157,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [mapMenu, setMapMenu] = useState<MapMenu | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
+  const [paretoRoutes, setParetoRoutes] = useState<ParetoRoute[] | null>(null)
   const [planActivities, setPlanActivities] = useState<PlanActivity[]>(() => {
     try {
       const stored = typeof window !== 'undefined' ? localStorage.getItem('rtp:plan') : null
@@ -377,38 +382,74 @@ export function TripProvider({ children }: { children: ReactNode }) {
       lat: s.coordinates.lat,
       lng: s.coordinates.lng,
     }))
-    const timeMatrix = await getTimeMatrix(matrixStops).catch(() => null)
 
-    const toStopWithId = (s: RouteStop) => ({
-      ...s,
-      id: s.city,
-      lat: s.coordinates.lat,
-      lng: s.coordinates.lng,
-    })
+    setIsOptimizing(true)
+    try {
+      const timeMatrix = await getTimeMatrix(matrixStops).catch(() => null)
 
-    const optimized = optimizeRoute(
-      intermediates.map(toStopWithId),
-      {
-        start: toStopWithId(origin),
-        end: toStopWithId(destination),
-      },
-      timeMatrix
-    )
+      const toStopWithId = (s: RouteStop) => ({
+        ...s,
+        id: s.city,
+        lat: s.coordinates.lat,
+        lng: s.coordinates.lng,
+      })
 
-    const reorderedCities = [
+      const candidatePool = intermediates.map(toStopWithId)
+
+      // Build attraction and hotel price maps
+      const attractionCounts = new Map<string, number>(
+        intermediates.map(s => [s.city, attractionsByCity[s.city]?.length ?? 0])
+      )
+      const hotelPriceByCity = new Map<string, number>(
+        intermediates.map(s => {
+          const hotels = hotelsByCity[s.city]
+          const price = hotels && hotels.length > 0 ? hotels[0].pricePerNight ?? 120 : 120
+          return [s.city, price]
+        })
+      )
+      const stayNightsByCity = new Map<string, number>(
+        intermediates.map(s => [s.city, s.stayNights ?? 1])
+      )
+
+      const result = runNSGAII({
+        candidatePool,
+        origin: toStopWithId(origin),
+        destination: toStopWithId(destination),
+        timeMatrix,
+        attractionCounts,
+        hotelPriceByCity,
+        stayNightsByCity,
+      })
+
+      // Show RouteOptionsCard — don't trigger AI call yet
+      setParetoRoutes(result)
+    } finally {
+      setIsOptimizing(false)
+    }
+  }, [stops, attractionsByCity, hotelsByCity])
+
+  const handleSelectParetoRoute = useCallback((route: ParetoRoute) => {
+    setParetoRoutes(null)
+    const origin = stops[0]
+    const destination = stops[stops.length - 1]
+
+    // Build city list from selected route
+    // Note: toStopWithId() sets id = s.city, so s.id is the city name
+    const cityList = [
       `${origin.city}, ${origin.state}`,
-      ...optimized.map(s => `${s.city}, ${s.state}`),
+      ...route.intermediates.map(s => {
+        // Look up the full city/state from existing stops by city name (= id)
+        const match = stops.find(stop => stop.city === s.id)
+        if (match) return `${match.city}, ${match.state}`
+        return s.id
+      }),
       `${destination.city}, ${destination.state}`,
     ]
 
-    const changed = optimized.some((s, i) => s.city !== intermediates[i].city)
-    const matrixNote = timeMatrix ? ' (using real drive times)' : ''
-    const msg = changed
-      ? `Optimize my route — reorder stops to minimize driving${matrixNote}. Recalculate the itinerary in this order: ${reorderedCities.join(' → ')}`
-      : `My route is already optimized${matrixNote}: ${reorderedCities.join(' → ')}. Please confirm and show the current itinerary summary.`
-
-    setIsOptimizing(true)
-    append({ role: 'user', content: msg }).finally(() => setIsOptimizing(false))
+    append({
+      role: 'user',
+      content: `I selected the "${route.label}" route variant from the optimizer. Please recalculate the itinerary with these stops in order: ${cityList.join(' → ')}`,
+    })
   }, [stops, append])
 
   // ── Trip persistence ──
@@ -588,6 +629,9 @@ export function TripProvider({ children }: { children: ReactNode }) {
     handleReservationStatusChange,
     handleOptimizeRoute,
     isOptimizing,
+    paretoRoutes,
+    setParetoRoutes,
+    handleSelectParetoRoute,
     planActivities,
     planOpen,
     setPlanOpen,

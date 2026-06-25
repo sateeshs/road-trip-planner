@@ -11,6 +11,7 @@ import BookingReviewModal from '@/components/BookingReviewModal'
 import ItineraryPanel from '@/components/ItineraryPanel'
 import PlanPanel from '@/components/PlanPanel'
 import TripMembersPanel from '@/components/TripMembersPanel'
+import RouteOptionsCard from '@/components/RouteOptionsCard'
 import type { Hotel, HotelOffer } from '@/types'
 
 export default function HomePage() {
@@ -59,6 +60,9 @@ function TripLayout() {
     handleConfirmBooking,
     handleCancelReservation,
     handleReservationStatusChange,
+    paretoRoutes,
+    setParetoRoutes,
+    handleSelectParetoRoute,
     planActivities,
     planOpen,
     setPlanOpen,
@@ -245,6 +249,15 @@ function TripLayout() {
         open={membersOpen}
         onClose={() => setMembersOpen(false)}
       />
+
+      {/* NSGA-II Pareto route options overlay */}
+      {paretoRoutes && (
+        <RouteOptionsCard
+          routes={paretoRoutes}
+          onSelect={handleSelectParetoRoute}
+          onDismiss={() => setParetoRoutes(null)}
+        />
+      )}
     </div>
   )
 }
