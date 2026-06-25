@@ -1,11 +1,20 @@
 'use client'
 
 import type { ParetoRoute } from '@/lib/route-optimizer'
+import type { StopScore, StopQualityLabel } from '@/lib/stop-scorer'
 
 interface RouteOptionsCardProps {
   routes: ParetoRoute[]
   onSelect: (route: ParetoRoute) => void
   onDismiss: () => void
+  stopScores?: Map<string, StopScore> | null
+}
+
+const QUALITY_BADGE: Record<StopQualityLabel, { text: string; cls: string }> = {
+  excellent: { text: 'Excellent', cls: 'bg-emerald-500/20 text-emerald-300' },
+  good:      { text: 'Good',      cls: 'bg-blue-500/20 text-blue-300' },
+  fair:      { text: 'Fair',      cls: 'bg-yellow-500/20 text-yellow-300' },
+  poor:      { text: 'Poor',      cls: 'bg-red-500/20 text-red-300' },
 }
 
 function formatMinutes(minutes: number): string {
@@ -30,7 +39,7 @@ const LABEL_META: Record<ParetoRoute['label'], { icon: string; title: string; re
   complete: { icon: '🗺️', title: 'Complete' },
 }
 
-export default function RouteOptionsCard({ routes, onSelect, onDismiss }: RouteOptionsCardProps) {
+export default function RouteOptionsCard({ routes, onSelect, onDismiss, stopScores }: RouteOptionsCardProps) {
   // Ensure display order: fast → balanced → complete
   const ordered: ParetoRoute[] = (['fast', 'balanced', 'complete'] as const)
     .map(label => routes.find(r => r.label === label))
@@ -110,10 +119,24 @@ export default function RouteOptionsCard({ routes, onSelect, onDismiss }: RouteO
                   </div>
                 </div>
 
-                {/* Stop list (compact) */}
+                {/* Stop list with quality badges */}
                 {route.intermediates.length > 0 && (
-                  <div className="mt-3 text-xs text-gray-500 leading-relaxed">
-                    {route.intermediates.map(s => s.id).join(' → ')}
+                  <div className="mt-3 space-y-1">
+                    {route.intermediates.map(s => {
+                      const score = stopScores?.get(s.id)
+                      const badge = score ? QUALITY_BADGE[score.label] : null
+                      return (
+                        <div key={s.id} className="flex items-center gap-1.5 text-xs">
+                          <span className="text-gray-500">•</span>
+                          <span className="text-gray-400 truncate">{s.id}</span>
+                          {badge && (
+                            <span className={`ml-auto shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.cls}`}>
+                              {badge.text}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 

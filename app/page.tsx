@@ -63,6 +63,7 @@ function TripLayout() {
     paretoRoutes,
     setParetoRoutes,
     handleSelectParetoRoute,
+    stopScores,
     planActivities,
     planOpen,
     setPlanOpen,
@@ -256,6 +257,7 @@ function TripLayout() {
           routes={paretoRoutes}
           onSelect={handleSelectParetoRoute}
           onDismiss={() => setParetoRoutes(null)}
+          stopScores={stopScores}
         />
       )}
     </div>

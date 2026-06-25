@@ -10,6 +10,7 @@ import { reverseGeocode } from '@/lib/route-utils'
 import { optimizeRoute, runNSGAII } from '@/lib/route-optimizer'
 import type { ParetoRoute } from '@/lib/route-optimizer'
 import { getTimeMatrix } from '@/lib/osrm-client'
+import { scoreStops, buildStopWeights } from '@/lib/stop-scorer'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import type { Message } from 'ai'
 
@@ -87,6 +88,7 @@ export interface TripContextValue {
   paretoRoutes: ParetoRoute[] | null
   setParetoRoutes: (r: ParetoRoute[] | null) => void
   handleSelectParetoRoute: (route: ParetoRoute) => void
+  stopScores: Map<string, import('@/lib/stop-scorer').StopScore> | null
   // Activity plan (TREK "place pool" concept, client-side)
   planActivities: PlanActivity[]
   planOpen: boolean
@@ -158,6 +160,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [mapMenu, setMapMenu] = useState<MapMenu | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [paretoRoutes, setParetoRoutes] = useState<ParetoRoute[] | null>(null)
+  const [stopScores, setStopScores] = useState<Map<string, import('@/lib/stop-scorer').StopScore> | null>(null)
   const [planActivities, setPlanActivities] = useState<PlanActivity[]>(() => {
     try {
       const stored = typeof window !== 'undefined' ? localStorage.getItem('rtp:plan') : null
@@ -411,6 +414,27 @@ export function TripProvider({ children }: { children: ReactNode }) {
         intermediates.map(s => [s.city, s.stayNights ?? 1])
       )
 
+      // Phase 4: score candidate stops, use scores as sampling weights in NSGA-II
+      const scores = scoreStops({
+        stops: intermediates.map(s => ({
+          id: s.city,
+          lat: s.coordinates.lat,
+          lng: s.coordinates.lng,
+          attractionCount: attractionsByCity[s.city]?.length ?? 0,
+          hotelCount: hotelsByCity[s.city]?.length ?? 0,
+          avgHotelPrice: (() => {
+            const h = hotelsByCity[s.city]
+            if (!h || h.length === 0) return 0
+            const prices = h.map(x => x.pricePerNight ?? 0).filter(p => p > 0)
+            return prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0
+          })(),
+        })),
+        origin: { lat: origin.coordinates.lat, lng: origin.coordinates.lng },
+        destination: { lat: destination.coordinates.lat, lng: destination.coordinates.lng },
+        routeGeometry: routeGeometry ?? undefined,
+      })
+      const stopWeights = buildStopWeights(scores)
+
       const result = runNSGAII({
         candidatePool,
         origin: toStopWithId(origin),
@@ -419,14 +443,19 @@ export function TripProvider({ children }: { children: ReactNode }) {
         attractionCounts,
         hotelPriceByCity,
         stayNightsByCity,
+        stopWeights,
       })
+
+      // Store scores for RouteOptionsCard quality badges
+      const scoresMap = new Map(scores.map(s => [s.id, s]))
+      setStopScores(scoresMap)
 
       // Show RouteOptionsCard — don't trigger AI call yet
       setParetoRoutes(result)
     } finally {
       setIsOptimizing(false)
     }
-  }, [stops, attractionsByCity, hotelsByCity])
+  }, [stops, attractionsByCity, hotelsByCity, routeGeometry])
 
   const handleSelectParetoRoute = useCallback((route: ParetoRoute) => {
     setParetoRoutes(null)
@@ -632,6 +661,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
     paretoRoutes,
     setParetoRoutes,
     handleSelectParetoRoute,
+    stopScores,
     planActivities,
     planOpen,
     setPlanOpen,

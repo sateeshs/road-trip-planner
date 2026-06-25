@@ -29,6 +29,8 @@ export interface NSGAIIConfig {
   attractionCounts: Map<string, number> // city id → number of attractions
   hotelPriceByCity: Map<string, number> // city id → avg nightly rate (fallback $120)
   stayNightsByCity: Map<string, number> // city id → number of nights
+  /** Phase 4: weighted sampling for Insert/Point mutations. city id → 0.1–1.0 */
+  stopWeights?: Map<string, number>
   populationSize?: number               // default 120
   generations?: number                  // default 200
 }
@@ -282,10 +284,27 @@ function tournamentSelect(population: RankedIndividual[]): RankedIndividual {
   return a.crowdingDistance >= b.crowdingDistance ? a : b
 }
 
+// Weighted random pick from a list of ids using Phase-4 stop weights.
+// Falls back to uniform random when no weights are provided.
+function weightedPick(candidates: string[], weights: Map<string, number> | undefined): string {
+  if (!weights || candidates.length === 0) {
+    return candidates[Math.floor(Math.random() * candidates.length)]
+  }
+  const ws = candidates.map(id => weights.get(id) ?? 0.5)
+  const total = ws.reduce((a, b) => a + b, 0)
+  let r = Math.random() * total
+  for (let i = 0; i < candidates.length; i++) {
+    r -= ws[i]
+    if (r <= 0) return candidates[i]
+  }
+  return candidates[candidates.length - 1]
+}
+
 // Mutation operators
 function mutate(
   individual: Individual,
-  pool: string[]
+  pool: string[],
+  weights: Map<string, number> | undefined
 ): Individual {
   const op = Math.floor(Math.random() * 4)
   const ind = [...individual]
@@ -294,7 +313,7 @@ function mutate(
     // Insert: pick a stop from pool NOT in individual, insert at random position
     const outside = pool.filter(id => !ind.includes(id))
     if (outside.length === 0) return ind
-    const toInsert = outside[Math.floor(Math.random() * outside.length)]
+    const toInsert = weightedPick(outside, weights)
     const pos = Math.floor(Math.random() * (ind.length + 1))
     ind.splice(pos, 0, toInsert)
     return ind
@@ -313,7 +332,7 @@ function mutate(
     if (ind.length === 0) return ind
     const outside = pool.filter(id => !ind.includes(id))
     if (outside.length === 0) return ind
-    const replacement = outside[Math.floor(Math.random() * outside.length)]
+    const replacement = weightedPick(outside, weights)
     const pos = Math.floor(Math.random() * ind.length)
     ind[pos] = replacement
     return ind
@@ -406,7 +425,7 @@ export function runNSGAII(config: NSGAIIConfig): ParetoRoute[] {
     // Generate offspring via tournament selection + mutation
     const offspring: RankedIndividual[] = Array.from({ length: populationSize }, () => {
       const parent = tournamentSelect(population)
-      const childInd = mutate(parent.individual, poolIds)
+      const childInd = mutate(parent.individual, poolIds, config.stopWeights)
       return {
         individual: childInd,
         fitness: computeFitness(childInd, config, idToStop),
