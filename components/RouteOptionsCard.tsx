@@ -90,10 +90,10 @@ export default function RouteOptionsCard({
         </div>
 
         {/* Budget row */}
-        <div className="flex items-center gap-3 px-6 py-3 border-b border-white/5 bg-white/3">
-          <span className="text-sm text-gray-400 shrink-0">Your budget:</span>
+        <div className="flex items-center gap-3 px-6 py-3 border-b border-white/15 bg-white/8">
+          <span className="text-sm font-medium text-gray-200 shrink-0">💰 Trip budget:</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-gray-500 text-sm">$</span>
+            <span className="text-gray-300 text-sm font-medium">$</span>
             <input
               type="text"
               inputMode="numeric"
@@ -102,16 +102,15 @@ export default function RouteOptionsCard({
               onChange={e => setBudgetInput(e.target.value)}
               onBlur={e => handleBudgetCommit(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleBudgetCommit(budgetInput)}
-              className="w-24 bg-white/10 border border-white/15 rounded-lg px-2.5 py-1 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500/60 focus:bg-white/15 transition-colors"
+              className="w-28 bg-white/15 border border-white/30 rounded-lg px-2.5 py-1 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-400/80 focus:bg-white/20 transition-colors"
             />
           </div>
-          {userBudget != null && (
-            <span className="text-xs text-gray-500">
-              Routes over <span className="text-white font-medium">{formatCost(userBudget)}</span> are grayed out
+          {userBudget != null ? (
+            <span className="text-xs text-gray-300">
+              Routes over <span className="text-white font-semibold">{formatCost(userBudget)}</span> are grayed out
             </span>
-          )}
-          {userBudget == null && (
-            <span className="text-xs text-gray-600">Set a budget to highlight over-budget routes</span>
+          ) : (
+            <span className="text-xs text-gray-400">Enter a budget to filter over-budget routes</span>
           )}
         </div>
 

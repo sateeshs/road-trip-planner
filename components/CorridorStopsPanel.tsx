@@ -10,9 +10,11 @@ import type { CorridorStop } from '@/hooks/useCorridorStops'
 interface CorridorStopsPanelProps {
   stops: CorridorStop[]
   onAdd: (stop: CorridorStop) => void
+  /** Whether the left chat panel is expanded — shifts corridor panel right to avoid overlap */
+  chatOpen?: boolean
 }
 
-export default function CorridorStopsPanel({ stops, onAdd }: CorridorStopsPanelProps) {
+export default function CorridorStopsPanel({ stops, onAdd, chatOpen = true }: CorridorStopsPanelProps) {
   const [dismissed, setDismissed] = useState(false)
   const [added, setAdded] = useState<Set<string>>(new Set())
 
@@ -23,8 +25,14 @@ export default function CorridorStopsPanel({ stops, onAdd }: CorridorStopsPanelP
     onAdd(stop)
   }
 
+  // When chat panel is open (left-4, w-[26rem] = ~432px), start after it.
+  // When collapsed, center across full viewport.
+  const posClass = chatOpen
+    ? 'left-[27.5rem] right-4'
+    : 'left-1/2 -translate-x-1/2 max-w-3xl'
+
   return (
-    <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[999] w-full max-w-3xl px-4 pointer-events-none">
+    <div className={`absolute top-[4.5rem] z-[999] px-0 pointer-events-none ${posClass}`}>
       <div className="pointer-events-auto bg-white/90 backdrop-blur-md border border-white/50 shadow-lg rounded-2xl px-3 py-2.5">
         {/* Header row */}
         <div className="flex items-center justify-between mb-2">

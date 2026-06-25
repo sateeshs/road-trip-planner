@@ -169,6 +169,7 @@ function TripLayout() {
         <CorridorStopsPanel
           stops={corridorStops}
           onAdd={handleAddCorridorStop}
+          chatOpen={!chatCollapsed}
         />
       )}
 
