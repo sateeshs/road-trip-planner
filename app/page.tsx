@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { TripProvider, useTripContext } from '@/contexts/TripContext'
 import ChatPanel from '@/components/ChatPanel'
+import ChatModal from '@/components/ChatModal'
 import MapView from '@/components/MapView'
 import StopBottomSheet from '@/components/StopBottomSheet'
 import FloatingRouteSummary from '@/components/FloatingRouteSummary'
@@ -79,6 +80,7 @@ function TripLayout() {
   } = useTripContext()
 
   const [membersOpen, setMembersOpen] = useState(false)
+  const [chatModalOpen, setChatModalOpen] = useState(false)
 
   // Phase 7: corridor opportunistic stops
   const corridorStops = useCorridorStops(routeGeometry, stops)
@@ -146,7 +148,20 @@ function TripLayout() {
         onInputChange={handleInputChange}
         onSubmit={handleSubmit}
         onSuggestionSelect={handleSuggestionSelect}
+        onExpand={() => setChatModalOpen(true)}
       />
+
+      {/* Expanded chat modal — same state, always in sync */}
+      {chatModalOpen && (
+        <ChatModal
+          messages={messages}
+          input={input}
+          isLoading={isLoading}
+          onInputChange={handleInputChange}
+          onSubmit={handleSubmit}
+          onClose={() => setChatModalOpen(false)}
+        />
+      )}
 
       {/* Route summary pill (top-center) */}
       <FloatingRouteSummary
