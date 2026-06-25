@@ -5,7 +5,6 @@ import type { Message } from 'ai'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import Spinner from './shared/Spinner'
 
 interface ChatPanelProps {
   messages: Message[]
@@ -18,160 +17,284 @@ interface ChatPanelProps {
   onSuggestionSelect: (text: string) => void
 }
 
+// Animated typing indicator
+function TypingDots() {
+  return (
+    <div className="flex items-center gap-1 py-1 px-1">
+      {[0, 1, 2].map(i => (
+        <span
+          key={i}
+          className="w-2 h-2 rounded-full bg-blue-400 opacity-60"
+          style={{ animation: `chat-bounce 1.2s ease-in-out ${i * 0.2}s infinite` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+// Markdown renderer for assistant messages
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw]}
+      components={{
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        h1: ({ node, ...p }) => (
+          <h1 className="text-base font-bold text-gray-900 mt-4 mb-2 pb-1.5 border-b-2 border-blue-100 flex items-center gap-2">
+            {p.children}
+          </h1>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        h2: ({ node, ...p }) => (
+          <h2 className="text-sm font-bold text-blue-700 mt-3 mb-1.5 uppercase tracking-wide">
+            {p.children}
+          </h2>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        h3: ({ node, ...p }) => (
+          <h3 className="text-sm font-semibold text-gray-800 mt-2.5 mb-1">
+            {p.children}
+          </h3>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        p: ({ node, ...p }) => (
+          <p className="text-sm text-gray-700 leading-relaxed my-1.5">{p.children}</p>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        ul: ({ node, ...p }) => (
+          <ul className="my-2 ml-1 space-y-1">{p.children}</ul>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        ol: ({ node, ...p }) => (
+          <ol className="my-2 ml-4 space-y-1 list-decimal">{p.children}</ol>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        li: ({ node, ...p }) => (
+          <li className="text-sm text-gray-700 leading-snug flex items-start gap-2">
+            <span className="text-blue-400 mt-1 shrink-0 text-xs">▸</span>
+            <span>{p.children}</span>
+          </li>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        strong: ({ node, ...p }) => (
+          <strong className="font-semibold text-gray-900">{p.children}</strong>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        em: ({ node, ...p }) => (
+          <em className="italic text-gray-600">{p.children}</em>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        a: ({ node, ...p }) => (
+          <a href={p.href} className="text-blue-600 underline underline-offset-2 hover:text-blue-800" target="_blank" rel="noopener noreferrer">
+            {p.children}
+          </a>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        blockquote: ({ node, ...p }) => (
+          <blockquote className="border-l-4 border-blue-300 pl-3 my-2 text-gray-600 italic bg-blue-50/60 py-1.5 rounded-r-lg">
+            {p.children}
+          </blockquote>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        code: ({ node, className, children, ...p }) => className
+          ? <code className="block bg-gray-900 text-green-300 text-xs rounded-lg p-3 my-2 overflow-x-auto font-mono">{children}</code>
+          : <code className="bg-gray-100 text-blue-700 text-xs rounded px-1.5 py-0.5 font-mono">{children}</code>,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        table: ({ node, ...p }) => (
+          <div className="overflow-x-auto my-2.5 rounded-lg border border-gray-200">
+            <table className="w-full text-xs border-collapse">{p.children}</table>
+          </div>
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        thead: ({ node, ...p }) => <thead className="bg-blue-50 border-b border-blue-100">{p.children}</thead>,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        th: ({ node, ...p }) => <th className="px-3 py-2 text-left text-xs font-semibold text-blue-800">{p.children}</th>,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        td: ({ node, ...p }) => <td className="px-3 py-2 text-gray-700 border-t border-gray-100">{p.children}</td>,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        hr: ({ node, ...p }) => <hr className="my-3 border-gray-200" />,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+}
+
 export default function ChatPanel({
   messages, input, isLoading, collapsed, onToggle,
-  onInputChange, onSubmit, onSuggestionSelect,
+  onInputChange, onSubmit,
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, isLoading])
 
-  // Collapsed state: show only the toggle tab
+  // Auto-grow textarea
+  function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    onInputChange(e)
+    const el = e.target
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+  }
+
   if (collapsed) {
     return (
       <button
         onClick={onToggle}
-        className="absolute left-0 top-1/2 -translate-y-1/2 z-[1000] bg-white/90 backdrop-blur-md border border-white/40 shadow-lg rounded-r-xl px-2 py-4 flex flex-col items-center gap-1 hover:bg-blue-600 hover:text-white transition-colors group"
+        className="absolute left-0 top-1/2 -translate-y-1/2 z-[1000] bg-white/95 backdrop-blur-md border border-gray-200 shadow-lg rounded-r-xl px-2 py-5 flex flex-col items-center gap-1.5 hover:bg-blue-600 hover:border-blue-600 hover:text-white transition-all group"
         title="Open chat"
       >
-        <span className="text-lg">💬</span>
-        <span className="text-xs font-medium [writing-mode:vertical-rl] text-gray-600 group-hover:text-white">Chat</span>
+        <span className="text-xl">💬</span>
+        <span className="text-[10px] font-semibold tracking-widest uppercase [writing-mode:vertical-rl] text-gray-500 group-hover:text-white">
+          Chat
+        </span>
       </button>
     )
   }
 
   return (
-    <div className="absolute left-4 top-4 bottom-4 w-80 z-[1000] flex flex-col bg-white/92 backdrop-blur-xl border border-white/40 shadow-2xl rounded-2xl overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100/80 bg-white/50">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">🗺️</span>
-          <div>
-            <h1 className="text-sm font-bold text-gray-900 leading-tight">Road Trip Planner</h1>
-            <p className="text-xs text-gray-400">AI-powered · Free</p>
-          </div>
-        </div>
-        <button
-          onClick={onToggle}
-          className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors"
-          title="Collapse chat"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-      </div>
+    <>
+      {/* Keyframe for typing dots — injected once */}
+      <style>{`
+        @keyframes chat-bounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+          40% { transform: translateY(-5px); opacity: 1; }
+        }
+      `}</style>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {messages.length === 0 && (
-          <div className="text-center py-6">
-            <div className="text-4xl mb-2">🚗</div>
-            <p className="text-sm font-semibold text-gray-800 mb-1">Where are you headed?</p>
-            <p className="text-xs text-gray-500">Describe your trip and I&apos;ll plan everything — stops, hotels, and activities.</p>
-          </div>
-        )}
+      <div className="absolute left-4 top-4 bottom-4 w-[26rem] z-[1000] flex flex-col bg-white border border-gray-200/80 shadow-2xl rounded-2xl overflow-hidden">
 
-        {messages.map(m => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[90%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed ${
-              m.role === 'user'
-                ? 'bg-blue-600 text-white rounded-br-sm'
-                : 'bg-gray-100/80 text-gray-800 rounded-bl-sm'
-            }`}>
-              {m.role === 'assistant' && (
-                <p className="text-xs font-medium text-gray-400 mb-1">AI Assistant</p>
-              )}
-              {m.role === 'assistant' ? (
-                <div className="text-sm leading-relaxed space-y-1.5">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw]}
-                    components={{
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      h1: ({ node, ..._ }) => <h1 className="text-base font-bold text-gray-900 mt-3 mb-1 border-b border-gray-200 pb-1">{_.children}</h1>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      h2: ({ node, ..._ }) => <h2 className="text-sm font-bold text-gray-900 mt-2.5 mb-1">{_.children}</h2>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      h3: ({ node, ..._ }) => <h3 className="text-sm font-semibold text-gray-800 mt-2 mb-0.5">{_.children}</h3>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      p: ({ node, ..._ }) => <p className="my-1 leading-relaxed">{_.children}</p>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      ul: ({ node, ..._ }) => <ul className="my-1 ml-4 space-y-0.5 list-disc">{_.children}</ul>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      ol: ({ node, ..._ }) => <ol className="my-1 ml-4 space-y-0.5 list-decimal">{_.children}</ol>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      li: ({ node, ..._ }) => <li className="leading-snug">{_.children}</li>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      strong: ({ node, ..._ }) => <strong className="font-semibold text-gray-900">{_.children}</strong>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      em: ({ node, ..._ }) => <em className="italic text-gray-700">{_.children}</em>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      a: ({ node, ..._ }) => <a href={_.href} className="text-blue-600 underline hover:text-blue-800" target="_blank" rel="noopener noreferrer">{_.children}</a>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      blockquote: ({ node, ..._ }) => <blockquote className="border-l-2 border-blue-400 pl-3 my-1 text-gray-600 italic">{_.children}</blockquote>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      code: ({ node, className, children, ..._ }) => className
-                        ? <code className="block bg-gray-800 text-green-300 text-xs rounded-lg p-2 my-1 overflow-x-auto">{children}</code>
-                        : <code className="bg-gray-200 text-gray-800 text-xs rounded px-1 py-0.5">{children}</code>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      table: ({ node, ..._ }) => <div className="overflow-x-auto my-2"><table className="w-full text-xs border-collapse border border-gray-300 rounded">{_.children}</table></div>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      thead: ({ node, ..._ }) => <thead className="bg-blue-50">{_.children}</thead>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      th: ({ node, ..._ }) => <th className="border border-gray-300 px-2 py-1.5 text-left font-semibold text-gray-700">{_.children}</th>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      td: ({ node, ..._ }) => <td className="border border-gray-300 px-2 py-1.5 text-gray-700">{_.children}</td>,
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      hr: ({ node, ..._ }) => <hr className="my-2 border-gray-200" />,
-                    }}
-                  >{m.content}</ReactMarkdown>
-                </div>
-              ) : (
-                <p className="whitespace-pre-wrap">{m.content}</p>
-              )}
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-base shadow-sm">
+              🗺️
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-900 leading-tight">Road Trip Planner</p>
+              <p className="text-[11px] text-gray-400 leading-tight">AI-powered · Free</p>
             </div>
           </div>
-        ))}
-
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100/80 rounded-2xl rounded-bl-sm px-3 py-2.5 flex items-center gap-2">
-              <Spinner size="sm" />
-              <span className="text-xs text-gray-500">Planning your trip...</span>
-            </div>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Input */}
-      <form onSubmit={onSubmit} className="p-3 border-t border-gray-100/80 bg-white/50">
-        <div className="flex gap-2 items-end">
-          <textarea
-            value={input}
-            onChange={onInputChange}
-            placeholder="Where do you want to go?"
-            rows={2}
-            className="flex-1 resize-none rounded-xl border border-gray-200 bg-white/80 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                e.currentTarget.form?.requestSubmit()
-              }
-            }}
-          />
           <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-40 transition-colors"
+            onClick={onToggle}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            title="Collapse chat"
           >
-            ↑
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M9 11L5 7l4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
           </button>
         </div>
-      </form>
-    </div>
+
+        {/* ── Messages ── */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-gray-50/40">
+
+          {/* Empty state */}
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center text-center pt-8 pb-4 px-4">
+              <div className="text-5xl mb-3">🚗</div>
+              <p className="text-base font-bold text-gray-900 mb-1">Where are you headed?</p>
+              <p className="text-sm text-gray-500 leading-relaxed">
+                Describe your trip and I&apos;ll plan stops, hotels, and activities.
+              </p>
+            </div>
+          )}
+
+          {messages.map(m => (
+            <div key={m.id} className={`flex gap-2.5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+
+              {/* AI avatar */}
+              {m.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-xl bg-blue-600 flex items-center justify-center text-sm shrink-0 mt-0.5 shadow-sm">
+                  🤖
+                </div>
+              )}
+
+              {/* Bubble */}
+              <div className={`max-w-[85%] ${m.role === 'user' ? '' : 'flex-1'}`}>
+                {m.role === 'user' ? (
+                  /* User bubble */
+                  <div className="bg-blue-600 text-white text-sm leading-relaxed rounded-2xl rounded-br-md px-4 py-2.5 shadow-sm">
+                    {m.content}
+                  </div>
+                ) : (
+                  /* Assistant card */
+                  <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200/80 shadow-sm px-4 py-3">
+                    <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-widest mb-2">
+                      AI Assistant
+                    </p>
+                    <AssistantMarkdown content={m.content} />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Typing indicator */}
+          {isLoading && (
+            <div className="flex gap-2.5 justify-start">
+              <div className="w-7 h-7 rounded-xl bg-blue-600 flex items-center justify-center text-sm shrink-0 mt-0.5 shadow-sm">
+                🤖
+              </div>
+              <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200/80 shadow-sm px-4 py-3">
+                <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-widest mb-2">
+                  AI Assistant
+                </p>
+                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <TypingDots />
+                  <span>Planning your trip…</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+
+        {/* ── Input ── */}
+        <div className="shrink-0 bg-white border-t border-gray-100 px-3 py-3">
+          <form onSubmit={onSubmit}>
+            <div className="flex items-end gap-2 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInput}
+                placeholder="Ask about your trip…"
+                rows={1}
+                style={{ height: '36px' }}
+                className="flex-1 resize-none bg-transparent text-sm text-gray-900 placeholder-gray-400 focus:outline-none leading-relaxed py-0.5"
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    e.currentTarget.form?.requestSubmit()
+                    // Reset height after send
+                    setTimeout(() => {
+                      if (textareaRef.current) textareaRef.current.style.height = '36px'
+                    }, 0)
+                  }
+                }}
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                className="shrink-0 w-8 h-8 bg-blue-600 hover:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-colors shadow-sm"
+                title="Send (Enter)"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M7 11V3M3 7l4-4 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-1.5 text-center">
+              Enter to send · Shift+Enter for new line
+            </p>
+          </form>
+        </div>
+
+      </div>
+    </>
   )
 }
