@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { connectDB } from '@/lib/mongodb'
 import { Trip } from '@/lib/models/Trip'
-import { nanoid } from 'nanoid'
+import { randomBytes } from 'crypto'
+function generateToken(len = 12) { return randomBytes(len).toString('base64url').slice(0, len) }
 
 // GET /api/trips — list trips for the current user
 export async function GET() {
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
     ownerId: body.ownerId ?? null,
     ownerName: session.user.name ?? 'Unknown',
     ownerEmail: session.user.email,
-    shareToken: nanoid(12),
+    shareToken: generateToken(12),
     title: body.title ?? 'New Trip',
     members: [],
     stops: body.stops ?? [],
