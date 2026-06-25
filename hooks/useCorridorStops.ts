@@ -19,6 +19,7 @@ export interface CorridorStop {
   lng: number
   distanceMiles: number      // perpendicular distance from route line
   routeFraction: number      // 0–1: where along route this stop sits (for ordering)
+  nearStopCity: string       // nearest named trip stop (city name for display)
 }
 
 // ─── Overpass mirrors (client-side) ─────────────────────────────────────────
@@ -130,6 +131,17 @@ function distToRoute(lat: number, lng: number, geometry: RouteGeometry): number 
     if (km < minKm) minKm = km
   }
   return minKm
+}
+
+/** Returns the city name of the nearest RouteStop to a given lat/lng. */
+function nearestStopCity(lat: number, lng: number, stops: RouteStop[]): string {
+  let best = stops[0]
+  let bestKm = Infinity
+  for (const s of stops) {
+    const km = haversineKm(lat, lng, s.coordinates.lat, s.coordinates.lng)
+    if (km < bestKm) { bestKm = km; best = s }
+  }
+  return best.city
 }
 
 // ─── Category → emoji mapping ────────────────────────────────────────────────
@@ -252,6 +264,7 @@ out ${MAX_PER_POINT};`
               lng: el.lon,
               distanceMiles: Math.round(distMiles * 10) / 10,
               routeFraction: sampleFraction,
+              nearStopCity: nearestStopCity(el.lat, el.lon, stops),
             })
           }
         })

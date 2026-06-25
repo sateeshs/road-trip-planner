@@ -65,10 +65,14 @@ export default function CorridorStopsPanel({ stops, onAdd, chatOpen = true }: Co
                 <span className="text-base leading-none">{stop.emoji}</span>
                 <div className="min-w-0">
                   <div className="font-medium truncate max-w-[140px]">{stop.name}</div>
-                  <div className="text-[10px] text-gray-400">
-                    {stop.distanceMiles < 0.5
-                      ? 'on route'
-                      : `${stop.distanceMiles} mi off route`}
+                  <div className="text-[10px] text-gray-400 leading-tight">
+                    {stop.category}
+                  </div>
+                  <div className="text-[10px] text-blue-500 font-medium leading-tight">
+                    Near {stop.nearStopCity}
+                    {stop.distanceMiles >= 0.5 && (
+                      <span className="text-gray-400 font-normal"> · {stop.distanceMiles} mi off route</span>
+                    )}
                   </div>
                 </div>
                 {isAdded ? (
