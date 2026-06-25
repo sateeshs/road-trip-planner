@@ -151,16 +151,9 @@ function TripLayout() {
         onExpand={() => setChatModalOpen(true)}
       />
 
-      {/* Expanded chat modal — same state, always in sync */}
+      {/* Expanded chat modal — reads from TripContext directly, always in sync */}
       {chatModalOpen && (
-        <ChatModal
-          messages={messages}
-          input={input}
-          isLoading={isLoading}
-          onInputChange={handleInputChange}
-          onSubmit={handleSubmit}
-          onClose={() => setChatModalOpen(false)}
-        />
+        <ChatModal onClose={() => setChatModalOpen(false)} />
       )}
 
       {/* Route summary pill (top-center) */}

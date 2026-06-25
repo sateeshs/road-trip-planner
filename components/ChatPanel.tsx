@@ -115,29 +115,44 @@ export default function ChatPanel({
             </div>
           )}
 
-          {messages.map(m => (
-            <div key={m.id} className={`flex gap-2.5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {m.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-xl bg-blue-600 flex items-center justify-center text-sm shrink-0 mt-0.5 shadow-sm">
-                  🤖
-                </div>
-              )}
-              <div className={`max-w-[85%] ${m.role === 'user' ? '' : 'flex-1'}`}>
-                {m.role === 'user' ? (
-                  <div className="bg-blue-600 text-white text-sm leading-relaxed rounded-2xl rounded-br-md px-4 py-2.5 shadow-sm">
-                    {m.content}
-                  </div>
-                ) : (
-                  <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200/80 shadow-sm px-4 py-3">
-                    <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-widest mb-2">
-                      AI Assistant
-                    </p>
-                    <AssistantMarkdown content={m.content} />
+          {messages.map(m => {
+            // AI SDK 4.x: prefer parts[].type==='text' over content (content may be empty for tool-call messages)
+            const textContent = (() => {
+              const p = (m as { parts?: Array<{ type: string; text?: string }> }).parts
+              if (p) {
+                const t = p.filter(x => x.type === 'text').map(x => x.text ?? '').join('')
+                if (t.trim()) return t
+              }
+              return typeof m.content === 'string' ? m.content : ''
+            })()
+
+            // Skip messages with nothing to display
+            if (!textContent.trim() && m.role !== 'user') return null
+
+            return (
+              <div key={m.id} className={`flex gap-2.5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {m.role !== 'user' && (
+                  <div className="w-7 h-7 rounded-xl bg-blue-600 flex items-center justify-center text-sm shrink-0 mt-0.5 shadow-sm">
+                    🤖
                   </div>
                 )}
+                <div className={`max-w-[85%] ${m.role === 'user' ? '' : 'flex-1'}`}>
+                  {m.role === 'user' ? (
+                    <div className="bg-blue-600 text-white text-sm leading-relaxed rounded-2xl rounded-br-md px-4 py-2.5 shadow-sm whitespace-pre-wrap">
+                      {textContent || m.content}
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200/80 shadow-sm px-4 py-3">
+                      <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-widest mb-2">
+                        AI Assistant
+                      </p>
+                      <AssistantMarkdown content={textContent} />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
 
           {isLoading && (
             <div className="flex gap-2.5 justify-start">
