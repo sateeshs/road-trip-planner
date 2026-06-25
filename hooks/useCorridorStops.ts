@@ -148,23 +148,59 @@ function nearestStopCity(lat: number, lng: number, stops: RouteStop[]): string {
 
 function categoryEmoji(tags: Record<string, string>): { category: string; emoji: string } {
   const t = tags.tourism, h = tags.historic, n = tags.natural, l = tags.leisure
+  const sport = tags.sport, amenity = tags.amenity, attraction = tags.attraction
+  const name = (tags.name ?? '').toLowerCase()
+
+  // Name-based inference for water/activity businesses (highest priority)
+  if (/cruise|cruises/.test(name))              return { category: 'Cruise', emoji: '🚢' }
+  if (/kayak|canoe|paddle/.test(name))          return { category: 'Kayaking', emoji: '🚣' }
+  if (/boat.?tour|boat.?rental/.test(name))     return { category: 'Boat Tour', emoji: '🛥️' }
+  if (/raft/.test(name))                        return { category: 'Rafting', emoji: '🌊' }
+  if (/zip.?line/.test(name))                   return { category: 'Zip Line', emoji: '🪂' }
+
+  // Explicit OSM tag matches
+  if (t === 'boat_tour')          return { category: 'Boat Tour', emoji: '🛥️' }
+  if (t === 'camp_site')          return { category: 'Campground', emoji: '⛺' }
+  if (amenity === 'boat_rental')  return { category: 'Boat Rental', emoji: '🛥️' }
+  if (attraction === 'boat_tour') return { category: 'Boat Tour', emoji: '🛥️' }
+  if (attraction === 'zip_line')  return { category: 'Zip Line', emoji: '🪂' }
+  if (attraction === 'scenic_railway') return { category: 'Scenic Train', emoji: '🚂' }
+  if (attraction === 'gondola_lift' || attraction === 'chair_lift') return { category: 'Gondola', emoji: '🚡' }
+
+  // Sport tags
+  if (sport === 'kayak' || sport === 'kayaking') return { category: 'Kayaking', emoji: '🚣' }
+  if (sport === 'canoe' || sport === 'canoeing') return { category: 'Canoeing', emoji: '🚣' }
+  if (sport === 'rafting')        return { category: 'Rafting', emoji: '🌊' }
+  if (sport === 'sailing')        return { category: 'Sailing', emoji: '⛵' }
+  if (sport === 'rowing')         return { category: 'Rowing', emoji: '🚣' }
+
+  // Leisure
+  if (l === 'marina')             return { category: 'Marina', emoji: '⚓' }
+  if (l === 'water_park')         return { category: 'Water Park', emoji: '💦' }
+  if (l === 'nature_reserve')     return { category: 'Nature Reserve', emoji: '🌳' }
+  if (l === 'park')               return { category: 'Park', emoji: '🌳' }
+
+  // Tourism
   if (t === 'museum')             return { category: 'Museum', emoji: '🏛️' }
   if (t === 'viewpoint')          return { category: 'Viewpoint', emoji: '🔭' }
   if (t === 'theme_park')         return { category: 'Theme Park', emoji: '🎡' }
   if (t === 'zoo')                return { category: 'Zoo', emoji: '🦒' }
   if (t === 'aquarium')           return { category: 'Aquarium', emoji: '🐠' }
   if (t === 'attraction')         return { category: 'Attraction', emoji: '🗺️' }
+
+  // Historic
   if (h === 'monument' || h === 'memorial') return { category: 'Monument', emoji: '🗿' }
   if (h === 'castle')             return { category: 'Castle', emoji: '🏰' }
   if (h)                          return { category: 'Historic Site', emoji: '🏺' }
+
+  // Natural
   if (n === 'peak')               return { category: 'Mountain', emoji: '🏔️' }
   if (n === 'waterfall')          return { category: 'Waterfall', emoji: '💧' }
   if (n === 'beach')              return { category: 'Beach', emoji: '🏖️' }
   if (n === 'cave_entrance')      return { category: 'Cave', emoji: '🕳️' }
   if (n === 'hot_spring')         return { category: 'Hot Spring', emoji: '♨️' }
   if (n)                          return { category: 'Natural Site', emoji: '🌿' }
-  if (l === 'nature_reserve')     return { category: 'Nature Reserve', emoji: '🌳' }
-  if (l === 'park')               return { category: 'Park', emoji: '🌳' }
+
   return { category: 'Point of Interest', emoji: '📍' }
 }
 
@@ -173,8 +209,8 @@ function categoryEmoji(tags: Record<string, string>): { category: string; emoji:
 const SAMPLE_EVERY_MILES = 25
 const MAX_SAMPLE_POINTS  = 10
 const QUERY_RADIUS_M     = 14000  // ~8.7 miles
-const MAX_PER_POINT      = 5
-const MAX_TOTAL          = 8
+const MAX_PER_POINT      = 8
+const MAX_TOTAL          = 12
 
 export function useCorridorStops(
   routeGeometry: RouteGeometry | null,
@@ -214,9 +250,14 @@ export function useCorridorStops(
   node["tourism"~"attraction|museum|viewpoint|theme_park|zoo|aquarium"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
   node["historic"~"monument|memorial|castle|ruins|archaeological_site"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
   node["natural"~"peak|waterfall|beach|hot_spring|cave_entrance"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["leisure"~"nature_reserve|park"]["name"]["leisure"!="park"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["leisure"~"nature_reserve|marina|water_park"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["tourism"~"boat_tour|camp_site"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["amenity"~"boat_rental"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["sport"~"kayak|kayaking|canoe|canoeing|sailing|rafting|rowing"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["name"~"cruise|cruises|kayak|canoe|paddle|boat.?tour|raft|zip.?line",i](around:${QUERY_RADIUS_M},${lat},${lng});
 );
-out ${MAX_PER_POINT};`
+out ${MAX_PER_POINT * 2};`
 
         const batches = await Promise.all(
           samplePoints.map(p => overpassRace(ql(p.lat, p.lng), controller.signal))
