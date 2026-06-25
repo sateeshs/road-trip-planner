@@ -31,6 +31,12 @@ export interface NSGAIIConfig {
   stayNightsByCity: Map<string, number> // city id → number of nights
   /** Phase 4: weighted sampling for Insert/Point mutations. city id → 0.1–1.0 */
   stopWeights?: Map<string, number>
+  /** Phase 6: saved-activity count per city → adds $25/activity to cost estimate */
+  activitiesByCity?: Map<string, number>
+  /** Phase 6: vehicle MPG for gas cost (default 30) */
+  mpg?: number
+  /** Phase 6: gas price per gallon (default 3.50) */
+  gasPricePerGallon?: number
   populationSize?: number               // default 120
   generations?: number                  // default 200
 }
@@ -170,15 +176,22 @@ function computeFitness(
 
   const driveMinutes = tourTime(stops, config.timeMatrix, config.origin, config.destination)
 
-  // Gas cost: (minutes / 60 hours) × (55 miles/hr) / 30 mpg × $3.50/gal
-  const gasCost = (driveMinutes / 60) * 55 / 30 * 3.50
-  // Hotel cost: sum of nights × price per city
+  const mpg           = config.mpg ?? 30
+  const gasPrice      = config.gasPricePerGallon ?? 3.50
+  const avgSpeedMph   = 55
+  // Gas cost: hours × mph → miles ÷ mpg × $/gal
+  const gasCost = (driveMinutes / 60) * avgSpeedMph / mpg * gasPrice
+  // Hotel cost: nights × price per city
   const hotelCost = individual.reduce((sum, id) => {
     const nights = config.stayNightsByCity.get(id) ?? 1
     const price = config.hotelPriceByCity.get(id) ?? 120
     return sum + nights * price
   }, 0)
-  const costUsd = gasCost + hotelCost
+  // Activities cost: $25 per saved activity at included stops
+  const activitiesCost = config.activitiesByCity
+    ? individual.reduce((sum, id) => sum + (config.activitiesByCity!.get(id) ?? 0) * 25, 0)
+    : 0
+  const costUsd = gasCost + hotelCost + activitiesCost
 
   return [attractionScore, driveMinutes, costUsd]
 }

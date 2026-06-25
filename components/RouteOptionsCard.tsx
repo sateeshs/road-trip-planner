@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { ParetoRoute } from '@/lib/route-optimizer'
 import type { StopScore, StopQualityLabel } from '@/lib/stop-scorer'
 
@@ -8,6 +9,9 @@ interface RouteOptionsCardProps {
   onSelect: (route: ParetoRoute) => void
   onDismiss: () => void
   stopScores?: Map<string, StopScore> | null
+  /** Phase 6: user's stated trip budget in USD */
+  userBudget?: number | null
+  onBudgetChange?: (budget: number | null) => void
 }
 
 const QUALITY_BADGE: Record<StopQualityLabel, { text: string; cls: string }> = {
@@ -39,28 +43,42 @@ const LABEL_META: Record<ParetoRoute['label'], { icon: string; title: string; re
   complete: { icon: '🗺️', title: 'Complete' },
 }
 
-export default function RouteOptionsCard({ routes, onSelect, onDismiss, stopScores }: RouteOptionsCardProps) {
+export default function RouteOptionsCard({
+  routes, onSelect, onDismiss, stopScores, userBudget, onBudgetChange,
+}: RouteOptionsCardProps) {
+  // Local controlled state for the budget input
+  const [budgetInput, setBudgetInput] = useState(userBudget != null ? String(userBudget) : '')
+
   // Ensure display order: fast → balanced → complete
   const ordered: ParetoRoute[] = (['fast', 'balanced', 'complete'] as const)
     .map(label => routes.find(r => r.label === label))
     .filter((r): r is ParetoRoute => r !== undefined)
 
+  function handleBudgetCommit(raw: string) {
+    const n = parseInt(raw.replace(/[^0-9]/g, ''), 10)
+    if (!isNaN(n) && n >= 50) {
+      onBudgetChange?.(n)
+    } else if (raw.trim() === '') {
+      onBudgetChange?.(null)
+    }
+  }
+
   return (
     /* Semi-transparent full-screen overlay */
     <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4">
-      {/* Backdrop blur */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onDismiss}
-      />
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onDismiss} />
 
       {/* Card */}
       <div className="relative z-10 w-full max-w-3xl bg-gray-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 overflow-hidden">
+
         {/* Header */}
         <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-white/10">
           <div>
             <h2 className="text-white font-bold text-lg leading-tight">Choose your optimized route</h2>
-            <p className="text-gray-400 text-sm mt-0.5">NSGA-II found {ordered.length} route variants — pick what fits you:</p>
+            <p className="text-gray-400 text-sm mt-0.5">
+              NSGA-II found {ordered.length} route variants — pick what fits you:
+            </p>
           </div>
           <button
             onClick={onDismiss}
@@ -71,28 +89,67 @@ export default function RouteOptionsCard({ routes, onSelect, onDismiss, stopScor
           </button>
         </div>
 
+        {/* Budget row */}
+        <div className="flex items-center gap-3 px-6 py-3 border-b border-white/5 bg-white/3">
+          <span className="text-sm text-gray-400 shrink-0">Your budget:</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-gray-500 text-sm">$</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="e.g. 800"
+              value={budgetInput}
+              onChange={e => setBudgetInput(e.target.value)}
+              onBlur={e => handleBudgetCommit(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleBudgetCommit(budgetInput)}
+              className="w-24 bg-white/10 border border-white/15 rounded-lg px-2.5 py-1 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500/60 focus:bg-white/15 transition-colors"
+            />
+          </div>
+          {userBudget != null && (
+            <span className="text-xs text-gray-500">
+              Routes over <span className="text-white font-medium">{formatCost(userBudget)}</span> are grayed out
+            </span>
+          )}
+          {userBudget == null && (
+            <span className="text-xs text-gray-600">Set a budget to highlight over-budget routes</span>
+          )}
+        </div>
+
         {/* Route cards */}
         <div className="flex flex-col sm:flex-row gap-3 p-4">
           {ordered.map(route => {
             const meta = LABEL_META[route.label]
             const isBalanced = route.label === 'balanced'
+            const overBudget = userBudget != null && route.estimatedCostUsd > userBudget
+
             return (
               <div
                 key={route.label}
                 className={[
-                  'flex-1 rounded-xl p-4 border transition-all',
-                  isBalanced
-                    ? 'bg-blue-600/20 border-blue-500/60 ring-1 ring-blue-500/40'
-                    : 'bg-white/5 border-white/10 hover:bg-white/10',
+                  'flex-1 rounded-xl p-4 border transition-all relative',
+                  overBudget
+                    ? 'bg-white/3 border-white/5 opacity-60'
+                    : isBalanced
+                      ? 'bg-blue-600/20 border-blue-500/60 ring-1 ring-blue-500/40'
+                      : 'bg-white/5 border-white/10 hover:bg-white/10',
                 ].join(' ')}
               >
+                {/* Over-budget banner */}
+                {overBudget && (
+                  <div className="absolute inset-x-0 top-0 flex items-center justify-center">
+                    <span className="bg-red-500/80 text-white text-[10px] font-semibold px-2 py-0.5 rounded-b-md">
+                      Over budget
+                    </span>
+                  </div>
+                )}
+
                 {/* Title row */}
-                <div className="flex items-center justify-between mb-1">
+                <div className={`flex items-center justify-between mb-1 ${overBudget ? 'mt-4' : ''}`}>
                   <div className="flex items-center gap-1.5">
                     <span className="text-xl leading-none">{meta.icon}</span>
                     <span className="text-white font-semibold text-sm">{meta.title}</span>
                   </div>
-                  {meta.recommended && (
+                  {meta.recommended && !overBudget && (
                     <span className="text-xs font-semibold text-blue-300 bg-blue-500/25 px-2 py-0.5 rounded-full">
                       ★ Recommended
                     </span>
@@ -109,9 +166,14 @@ export default function RouteOptionsCard({ routes, onSelect, onDismiss, stopScor
                     <span className="text-gray-500 w-4 text-center">🕐</span>
                     <span>{formatMinutes(route.driveMinutes)} drive</span>
                   </div>
-                  <div className="flex items-center gap-2 text-gray-300">
+                  <div className={`flex items-center gap-2 text-sm ${overBudget ? 'text-red-400' : 'text-gray-300'}`}>
                     <span className="text-gray-500 w-4 text-center">💰</span>
                     <span>~{formatCost(route.estimatedCostUsd)}</span>
+                    {overBudget && userBudget != null && (
+                      <span className="text-red-500 text-xs">
+                        (+{formatCost(route.estimatedCostUsd - userBudget)} over)
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-gray-300">
                     <span className="text-gray-500 w-4 text-center">⭐</span>
@@ -142,15 +204,18 @@ export default function RouteOptionsCard({ routes, onSelect, onDismiss, stopScor
 
                 {/* Select button */}
                 <button
-                  onClick={() => onSelect(route)}
+                  onClick={() => !overBudget && onSelect(route)}
+                  disabled={overBudget}
                   className={[
                     'mt-4 w-full py-2 px-3 rounded-lg font-semibold text-sm transition-colors',
-                    isBalanced
-                      ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                      : 'bg-white/10 hover:bg-white/20 text-white',
+                    overBudget
+                      ? 'bg-white/5 text-gray-600 cursor-not-allowed'
+                      : isBalanced
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                        : 'bg-white/10 hover:bg-white/20 text-white',
                   ].join(' ')}
                 >
-                  Select
+                  {overBudget ? 'Over budget' : 'Select'}
                 </button>
               </div>
             )

@@ -89,6 +89,9 @@ export interface TripContextValue {
   setParetoRoutes: (r: ParetoRoute[] | null) => void
   handleSelectParetoRoute: (route: ParetoRoute) => void
   stopScores: Map<string, import('@/lib/stop-scorer').StopScore> | null
+  // Phase 6: user budget
+  userBudget: number | null
+  setUserBudget: (b: number | null) => void
   // Activity plan (TREK "place pool" concept, client-side)
   planActivities: PlanActivity[]
   planOpen: boolean
@@ -161,6 +164,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [paretoRoutes, setParetoRoutes] = useState<ParetoRoute[] | null>(null)
   const [stopScores, setStopScores] = useState<Map<string, import('@/lib/stop-scorer').StopScore> | null>(null)
+  const [userBudget, setUserBudget] = useState<number | null>(null)
   const [planActivities, setPlanActivities] = useState<PlanActivity[]>(() => {
     try {
       const stored = typeof window !== 'undefined' ? localStorage.getItem('rtp:plan') : null
@@ -507,6 +511,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
       })
       const stopWeights = buildStopWeights(scores)
 
+      // Phase 6: activities cost per city ($25/saved activity)
+      const activitiesByCity = new Map<string, number>()
+      for (const act of planActivities) {
+        activitiesByCity.set(act.city, (activitiesByCity.get(act.city) ?? 0) + 1)
+      }
+
       const result = runNSGAII({
         candidatePool,
         origin: toStopWithId(origin),
@@ -516,6 +526,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
         hotelPriceByCity,
         stayNightsByCity,
         stopWeights,
+        activitiesByCity,
         populationSize,
         generations,
       })
@@ -526,7 +537,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsOptimizing(false)
     }
-  }, [stops, attractionsByCity, hotelsByCity, routeGeometry, append])
+  }, [stops, attractionsByCity, hotelsByCity, routeGeometry, planActivities, append])
 
   const handleSelectParetoRoute = useCallback((route: ParetoRoute) => {
     setParetoRoutes(null)
@@ -651,6 +662,23 @@ export function TripProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stops, tripId])
 
+  // Phase 6: detect budget mentions in user messages ("budget of $500", "only $1,000", etc.)
+  // Only updates if user hasn't manually overridden via setUserBudget.
+  useEffect(() => {
+    const userMessages = messages.filter(m => m.role === 'user')
+    if (userMessages.length === 0) return
+    const last = userMessages[userMessages.length - 1]
+    const text = typeof last.content === 'string' ? last.content : ''
+    const hasBudgetWord = /\b(budget|afford|spend|spending|cost|limit|total|max)\b/i.test(text)
+    if (!hasBudgetWord) return
+    const amounts = [...text.matchAll(/\$\s*([\d,]+)/g)]
+      .map(m => parseInt(m[1].replace(/,/g, ''), 10))
+      .filter(n => n >= 100)
+    if (amounts.length > 0) {
+      setUserBudget(Math.max(...amounts))
+    }
+  }, [messages])
+
   const addToPlan = useCallback((attraction: Attraction, stop: RouteStop, type: 'attraction' | 'outdoor') => {
     setPlanActivities(prev => {
       if (prev.some(a => a.id === attraction.id)) return prev  // already saved
@@ -733,6 +761,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
     setParetoRoutes,
     handleSelectParetoRoute,
     stopScores,
+    userBudget,
+    setUserBudget,
     planActivities,
     planOpen,
     setPlanOpen,
