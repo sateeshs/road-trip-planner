@@ -8,6 +8,7 @@ import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 import { reverseGeocode } from '@/lib/route-utils'
 import { optimizeRoute } from '@/lib/route-optimizer'
+import { getTimeMatrix } from '@/lib/osrm-client'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import type { Message } from 'ai'
 
@@ -80,7 +81,7 @@ export interface TripContextValue {
   handleConfirmBooking: (summary: BookingSummary) => void
   handleCancelReservation: (id: string) => void
   handleReservationStatusChange: (id: string, status: ConfirmedReservation['status']) => void
-  handleOptimizeRoute: () => void
+  handleOptimizeRoute: () => Promise<void>
   isOptimizing: boolean
   // Activity plan (TREK "place pool" concept, client-side)
   planActivities: PlanActivity[]
@@ -364,19 +365,34 @@ export function TripProvider({ children }: { children: ReactNode }) {
     setItineraryOpen(true)
   }, [selectedStop])
 
-  const handleOptimizeRoute = useCallback(() => {
-    if (stops.length < 4) return  // need at least 2 intermediates to reorder
+  const handleOptimizeRoute = useCallback(async () => {
+    if (stops.length < 3) return  // need at least 1 intermediate to optimize
     const origin = stops[0]
     const destination = stops[stops.length - 1]
     const intermediates = stops.slice(1, -1)
 
-    // Reorder intermediates using nearest-neighbor + 2-opt (ported from TREK RouteCalculator)
+    // Build OSRM time matrix for all stops (origin + intermediates + destination)
+    const matrixStops = stops.map(s => ({
+      id: s.city,
+      lat: s.coordinates.lat,
+      lng: s.coordinates.lng,
+    }))
+    const timeMatrix = await getTimeMatrix(matrixStops).catch(() => null)
+
+    const toStopWithId = (s: RouteStop) => ({
+      ...s,
+      id: s.city,
+      lat: s.coordinates.lat,
+      lng: s.coordinates.lng,
+    })
+
     const optimized = optimizeRoute(
-      intermediates.map(s => ({ ...s, lat: s.coordinates.lat, lng: s.coordinates.lng })),
+      intermediates.map(toStopWithId),
       {
-        start: { lat: origin.coordinates.lat, lng: origin.coordinates.lng },
-        end: { lat: destination.coordinates.lat, lng: destination.coordinates.lng },
-      }
+        start: toStopWithId(origin),
+        end: toStopWithId(destination),
+      },
+      timeMatrix
     )
 
     const reorderedCities = [
@@ -386,9 +402,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
     ]
 
     const changed = optimized.some((s, i) => s.city !== intermediates[i].city)
+    const matrixNote = timeMatrix ? ' (using real drive times)' : ''
     const msg = changed
-      ? `Optimize my route — reorder stops to minimize driving. Recalculate the itinerary in this order: ${reorderedCities.join(' → ')}`
-      : `My route is already optimized: ${reorderedCities.join(' → ')}. Please confirm and show the current itinerary summary.`
+      ? `Optimize my route — reorder stops to minimize driving${matrixNote}. Recalculate the itinerary in this order: ${reorderedCities.join(' → ')}`
+      : `My route is already optimized${matrixNote}: ${reorderedCities.join(' → ')}. Please confirm and show the current itinerary summary.`
 
     setIsOptimizing(true)
     append({ role: 'user', content: msg }).finally(() => setIsOptimizing(false))
