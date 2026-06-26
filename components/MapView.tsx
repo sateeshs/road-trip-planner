@@ -3,6 +3,7 @@ import dynamic from 'next/dynamic'
 import { Component, type ReactNode } from 'react'
 import type { RouteStop, Attraction, Hotel, RouteGeometry, ConfirmedReservation } from '@/types'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
+import type { CorridorStop } from '@/hooks/useCorridorStops'
 import Spinner from './shared/Spinner'
 
 const LeafletMap = dynamic(() => import('./LeafletMap'), {
@@ -47,6 +48,7 @@ interface MapViewProps {
   onMapRightClick?: (lat: number, lng: number, x: number, y: number) => void
   confirmedReservations?: ConfirmedReservation[]
   proactivePOIs?: ProactivePOIs
+  highlightedCorridorStop?: CorridorStop | null
 }
 
 export default function MapView(props: MapViewProps) {
