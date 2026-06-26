@@ -133,13 +133,51 @@ function distToRoute(lat: number, lng: number, geometry: RouteGeometry): number 
   return minKm
 }
 
-/** Returns the city name of the nearest RouteStop to a given lat/lng. */
-function nearestStopCity(lat: number, lng: number, stops: RouteStop[]): string {
+/**
+ * Returns what fraction (0–1) along the route polyline a lat/lng point is closest to.
+ * Used to compare a corridor POI's route position against each stop's route position,
+ * which is far more reliable than haversine distance on routes that curve significantly
+ * (e.g. Northville → Soo Locks → Pictured Rocks arcs through central Michigan).
+ */
+function routeFractionOf(lat: number, lng: number, geometry: RouteGeometry): number {
+  let totalKm = 0
+  const segKms: number[] = []
+  for (let i = 1; i < geometry.length; i++) {
+    const km = haversineKm(geometry[i - 1][0], geometry[i - 1][1], geometry[i][0], geometry[i][1])
+    segKms.push(km)
+    totalKm += km
+  }
+  if (totalKm === 0) return 0
+
+  let bestFrac = 0
+  let minDist = Infinity
+  let accumulated = 0
+  for (let i = 1; i < geometry.length; i++) {
+    const [alat, alng] = geometry[i - 1]
+    const [blat, blng] = geometry[i]
+    const dx = blng - alng, dy = blat - alat
+    const lenSq = dx * dx + dy * dy
+    const t = lenSq > 0 ? Math.max(0, Math.min(1, ((lng - alng) * dx + (lat - alat) * dy) / lenSq)) : 0
+    const dist = haversineKm(lat, lng, alat + t * dy, alng + t * dx)
+    if (dist < minDist) {
+      minDist = dist
+      bestFrac = (accumulated + t * segKms[i - 1]) / totalKm
+    }
+    accumulated += segKms[i - 1]
+  }
+  return bestFrac
+}
+
+/**
+ * Returns the stop city whose route-fraction position is closest to the given fraction.
+ * Precompute stopFractions once per route to avoid redundant geometry walks.
+ */
+function nearestStopByFraction(poiFraction: number, stops: RouteStop[], stopFractions: number[]): string {
   let best = stops[0]
-  let bestKm = Infinity
-  for (const s of stops) {
-    const km = haversineKm(lat, lng, s.coordinates.lat, s.coordinates.lng)
-    if (km < bestKm) { bestKm = km; best = s }
+  let bestDiff = Infinity
+  for (let i = 0; i < stops.length; i++) {
+    const diff = Math.abs(stopFractions[i] - poiFraction)
+    if (diff < bestDiff) { bestDiff = diff; best = stops[i] }
   }
   return best.city
 }
@@ -264,6 +302,15 @@ out ${MAX_PER_POINT};`
 
         if (controller.signal.aborted) return
 
+        // Precompute each stop's fraction along the route once — used for
+        // "Near [City]" labelling. Route-fraction comparison is far more accurate
+        // than haversine on routes that curve (e.g. Northville → Soo Locks → Pictured Rocks
+        // arcs east then west, making geographic distance to Northville misleadingly short
+        // for POIs that are actually near the destination).
+        const stopFractions = stops.map(s =>
+          routeFractionOf(s.coordinates.lat, s.coordinates.lng, routeGeometry)
+        )
+
         // Flatten, dedup by name, filter out existing stops and unnamed/short names
         const seen = new Set<string>()
         const candidates: CorridorStop[] = []
@@ -304,7 +351,7 @@ out ${MAX_PER_POINT};`
               lng: el.lon,
               distanceMiles: Math.round(distMiles * 10) / 10,
               routeFraction: sampleFraction,
-              nearStopCity: nearestStopCity(el.lat, el.lon, stops),
+              nearStopCity: nearestStopByFraction(sampleFraction, stops, stopFractions),
             })
           }
         })
