@@ -9,7 +9,7 @@ import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 import { reverseGeocode } from '@/lib/route-utils'
 import { optimizeRoute, runNSGAII } from '@/lib/route-optimizer'
 import type { ParetoRoute } from '@/lib/route-optimizer'
-import { getTimeMatrix } from '@/lib/osrm-client'
+import { getTimeMatrix, getRoute, metersToMiles, secondsToTime } from '@/lib/osrm-client'
 import { scoreStops, buildStopWeights } from '@/lib/stop-scorer'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import type { Message } from 'ai'
@@ -87,7 +87,7 @@ export interface TripContextValue {
   isOptimizing: boolean
   paretoRoutes: ParetoRoute[] | null
   setParetoRoutes: (r: ParetoRoute[] | null) => void
-  handleSelectParetoRoute: (route: ParetoRoute) => void
+  handleSelectParetoRoute: (route: ParetoRoute) => Promise<void>
   stopScores: Map<string, import('@/lib/stop-scorer').StopScore> | null
   // Phase 6: user budget
   userBudget: number | null
@@ -539,28 +539,62 @@ export function TripProvider({ children }: { children: ReactNode }) {
     }
   }, [stops, attractionsByCity, hotelsByCity, routeGeometry, planActivities, append])
 
-  const handleSelectParetoRoute = useCallback((route: ParetoRoute) => {
+  const handleSelectParetoRoute = useCallback(async (route: ParetoRoute) => {
     setParetoRoutes(null)
     const origin = stops[0]
     const destination = stops[stops.length - 1]
 
-    // Build city list from selected route
+    // Resolve ordered RouteStop objects for the selected variant
     // Note: toStopWithId() sets id = s.city, so s.id is the city name
-    const cityList = [
-      `${origin.city}, ${origin.state}`,
-      ...route.intermediates.map(s => {
-        // Look up the full city/state from existing stops by city name (= id)
-        const match = stops.find(stop => stop.city === s.id)
-        if (match) return `${match.city}, ${match.state}`
-        return s.id
-      }),
-      `${destination.city}, ${destination.state}`,
+    const orderedStops: RouteStop[] = [
+      origin,
+      ...route.intermediates.map(s => stops.find(stop => stop.city === s.id) ?? origin),
+      destination,
     ]
 
-    append({
-      role: 'user',
-      content: `I selected the "${route.label}" route variant from the optimizer. Please recalculate the itinerary with these stops in order: ${cityList.join(' → ')}`,
-    })
+    // Directly recompute the OSRM route — no AI call needed.
+    // Relying on append() here caused the AI to respond with text on the second
+    // optimization instead of calling suggest_route_stops, leaving the map stale.
+    try {
+      setIsOptimizing(true)
+      const waypoints = orderedStops.map(s => ({ lat: s.coordinates.lat, lng: s.coordinates.lng }))
+      const osrmResult = await getRoute(waypoints)
+
+      // Rebuild stops with updated per-leg drive time / distance / road info
+      const newStops: RouteStop[] = orderedStops.map((stop, i) => {
+        if (i === 0) return stop
+        const seg = osrmResult.segments[i - 1]
+        return {
+          ...stop,
+          driveTimeFromPrevious:     seg ? secondsToTime(seg.duration)   : stop.driveTimeFromPrevious,
+          driveDistanceFromPrevious: seg ? metersToMiles(seg.distance)    : stop.driveDistanceFromPrevious,
+          roadName: seg?.roadName,
+          hasToll:  seg?.hasToll,
+        }
+      })
+
+      setStops(newStops)
+      setRouteGeometry(osrmResult.geometry)
+      setTotalDistance(metersToMiles(osrmResult.totalDistance))
+      setTotalDuration(secondsToTime(osrmResult.totalDuration))
+    } catch (err) {
+      console.error('[Pareto] OSRM recalculation failed, falling back to AI:', err)
+      // Fallback: ask the AI explicitly — last resort only
+      const cityList = [
+        `${origin.city}, ${origin.state}`,
+        ...route.intermediates.map(s => {
+          const match = stops.find(stop => stop.city === s.id)
+          return match ? `${match.city}, ${match.state}` : s.id
+        }),
+        `${destination.city}, ${destination.state}`,
+      ]
+      append({
+        role: 'user',
+        content: `I selected the "${route.label}" route variant. Call suggest_route_stops immediately with these stops in order: ${cityList.join(' → ')}`,
+      })
+    } finally {
+      setIsOptimizing(false)
+    }
   }, [stops, append])
 
   // ── Trip persistence ──
