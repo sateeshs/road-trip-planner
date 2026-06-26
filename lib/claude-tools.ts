@@ -451,19 +451,19 @@ export const agentTools = {
 
       // Auto-populate surroundings ONLY for water-adjacent stops (lakes, rivers, harbors)
       // so cruise/kayak activities appear without waiting for a separate explore_surroundings call.
-      // Hard cap of 5s per query so we don't consume the 30s edge budget that
-      // search_attractions and search_hotels need.
+      // Hard cap of 3s total — search_attractions and search_hotels must still fit in the
+      // 30s Edge budget. qlTimeout=4s keeps the Overpass query under the outer timeout.
       const surroundingsByCity: Record<string, Attraction[]> = {}
       const waterStops = stops.slice(1).filter(s => isWaterAdjacent(s.coordinates.lat, s.coordinates.lng, s.city))
       await Promise.all(
         waterStops.map(async s => {
           try {
             const timeout = new Promise<Attraction[]>((_, reject) =>
-              setTimeout(() => reject(new Error('auto-surr timeout')), 8000)
+              setTimeout(() => reject(new Error('auto-surr timeout')), 3000)
             )
-            // limit=4, qlTimeout=6s — keeps the Overpass query fast within edge budget
+            // limit=4, qlTimeout=4s — tight budget to leave room for search_attractions/hotels
             const surr = await Promise.race([
-              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 4, 6),
+              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 4, 4),
               timeout,
             ])
             if (surr.length > 0) surroundingsByCity[s.city] = surr

@@ -255,9 +255,8 @@ export function useCorridorStops(
   node["amenity"~"boat_rental"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
   node["sport"~"kayak|kayaking|canoe|canoeing|sailing|rafting|rowing"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
   node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["name"~"cruise|cruises|kayak|canoe|paddle|boat.?tour|raft|zip.?line",i](around:${QUERY_RADIUS_M},${lat},${lng});
 );
-out ${MAX_PER_POINT * 2};`
+out ${MAX_PER_POINT};`
 
         const batches = await Promise.all(
           samplePoints.map(p => overpassRace(ql(p.lat, p.lng), controller.signal))

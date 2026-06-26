@@ -52,8 +52,9 @@ export async function POST(req: Request) {
     messages: trimmed,
     tools: agentTools,
     // Step budget: 1 suggest_route_stops + 4 search_attractions + 4 search_hotels
-    // + 4 explore_surroundings = 13 steps for a 4-stop trip. 20 gives comfortable headroom.
-    maxSteps: 20,
+    // + 4 explore_surroundings = 13 steps for a 4-stop trip. 15 gives headroom without
+    // letting the model burn the 30s Edge budget on excessive tool calls.
+    maxSteps: 15,
     onError: ({ error }) => {
       console.error('[OpenRouter] streamText error:', error)
     },
