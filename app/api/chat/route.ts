@@ -17,9 +17,11 @@ const openrouter = createOpenAI({
   },
 })
 
-// Default: openrouter/auto routes to the best available free model automatically.
-// Override with OPENROUTER_MODEL env var (e.g. openai/gpt-oss-120b:free, nvidia/nemotron-3-super-120b-a12b:free)
-const MODEL = process.env.OPENROUTER_MODEL ?? 'openrouter/free'
+// openai/gpt-oss-120b:free — confirmed to support tool calls reliably.
+// openrouter/free is a pseudo-model that picks any available free model; some
+// don't support tool_use and silently return text, breaking attractions/hotels.
+// Override with OPENROUTER_MODEL env var.
+const MODEL = process.env.OPENROUTER_MODEL ?? 'openai/gpt-oss-120b:free'
 
 // Max messages to send to the model — trim older ones to avoid context overflow.
 // Tool results can be 5–10 KB each; after 3–4 trip modifications the 131K context fills.
