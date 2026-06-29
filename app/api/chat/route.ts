@@ -35,7 +35,9 @@ export async function POST(req: Request) {
     )
   }
 
-  const { messages } = await req.json()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const body = await req.json() as { messages: any; tripStyles?: string[] }
+  const { messages, tripStyles } = body
 
   // Trim history: keep the most recent MAX_HISTORY_MESSAGES messages.
   // Always keep the first user message so the model knows the original trip request.
@@ -46,9 +48,14 @@ export async function POST(req: Request) {
 
   const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
 
+  const styleNote =
+    tripStyles && tripStyles.length > 0 && messages.length <= 2
+      ? `\n\nTrip style preferences selected by this user: ${tripStyles.join(', ')}. Tailor hotel tier, activity type, and dining recommendations accordingly.`
+      : ''
+
   const result = streamText({
     model: openrouter(MODEL),
-    system: `${SYSTEM_PROMPT}\n\nToday's date is ${today}. Use this as the default trip start date when none is provided.`,
+    system: `${SYSTEM_PROMPT}${styleNote}\n\nToday's date is ${today}. Use this as the default trip start date when none is provided.`,
     messages: trimmed,
     tools: agentTools,
     // Step budget: 1 suggest_route_stops + 4 search_attractions + 4 search_hotels

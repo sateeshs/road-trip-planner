@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import type { Message } from 'ai'
 import { AssistantMarkdown, TypingDots } from './ChatShared'
 import ChatToolResultRenderer from './chat-ui/ChatToolResultRenderer'
+import TripStylePicker from './TripStylePicker'
 import type { ToolInvocationPart } from '@/types'
 
 interface ChatPanelProps {
@@ -16,11 +17,13 @@ interface ChatPanelProps {
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void
   onSuggestionSelect: (text: string) => void
   onExpand: () => void
+  tripStyles: string[]
+  onToggleTripStyle: (style: string) => void
 }
 
 export default function ChatPanel({
   messages, input, isLoading, collapsed, onToggle,
-  onInputChange, onSubmit, onExpand,
+  onInputChange, onSubmit, onExpand, tripStyles, onToggleTripStyle,
 }: ChatPanelProps) {
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -193,6 +196,14 @@ export default function ChatPanel({
 
           <div ref={bottomRef} />
         </div>
+
+        {/* ── Trip Style Picker (shown only before first message) ── */}
+        {messages.length === 0 && (
+          <TripStylePicker
+            selectedStyles={tripStyles}
+            onToggle={onToggleTripStyle}
+          />
+        )}
 
         {/* ── Input ── */}
         <div className="shrink-0 bg-white border-t border-gray-100 px-3 py-3">

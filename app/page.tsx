@@ -73,6 +73,8 @@ function TripLayout() {
     planOpen,
     setPlanOpen,
     removeFromPlan,
+    tripStyles,
+    toggleTripStyle,
     tripId,
     membersCount,
     saveTripToDb,
@@ -151,6 +153,8 @@ function TripLayout() {
         onSubmit={handleSubmit}
         onSuggestionSelect={handleSuggestionSelect}
         onExpand={() => setChatModalOpen(true)}
+        tripStyles={tripStyles}
+        onToggleTripStyle={toggleTripStyle}
       />
 
       {/* Expanded chat modal — reads from TripContext directly, always in sync */}

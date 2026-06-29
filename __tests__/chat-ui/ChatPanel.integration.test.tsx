@@ -17,6 +17,8 @@ const baseProps = {
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault() },
   onSuggestionSelect: () => {},
   onExpand: () => {},
+  tripStyles: [] as string[],
+  onToggleTripStyle: () => {},
 }
 
 function makeAssistantMessage(parts: Message['parts'], id = 'msg-1'): Message {

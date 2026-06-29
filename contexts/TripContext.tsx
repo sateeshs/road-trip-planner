@@ -100,6 +100,10 @@ export interface TripContextValue {
   removeFromPlan: (id: string) => void
   isInPlan: (id: string) => boolean
 
+  // Trip style preferences
+  tripStyles: string[]
+  toggleTripStyle: (style: string) => void
+
   // Collaboration / persistence
   tripId: string | null
   membersCount: number
@@ -173,6 +177,15 @@ export function TripProvider({ children }: { children: ReactNode }) {
   })
   const [planOpen, setPlanOpen] = useState(false)
 
+  // ── Trip style preferences ──
+  const [tripStyles, setTripStyles] = useState<string[]>([])
+
+  const toggleTripStyle = useCallback((style: string) => {
+    setTripStyles(prev =>
+      prev.includes(style) ? prev.filter(s => s !== style) : [...prev, style]
+    )
+  }, [])
+
   // ── Collaboration state ──
   const [tripId, setTripId] = useState<string | null>(null)
   const [membersCount, setMembersCount] = useState(1)
@@ -189,6 +202,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   // ── Chat ──
   const { messages, input, handleInputChange, handleSubmit, isLoading, append, setInput } = useChat({
     api: '/api/chat',
+    body: { tripStyles },
   })
 
   // ── Keep a ref to latest stops so we can read them inside the effect
@@ -803,6 +817,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
     addToPlan,
     removeFromPlan,
     isInPlan,
+    tripStyles,
+    toggleTripStyle,
     tripId,
     membersCount,
     saveTripToDb,
