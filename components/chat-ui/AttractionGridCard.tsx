@@ -28,7 +28,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
 }
 
 function categoryEmoji(category: string): string {
-  return CATEGORY_EMOJI[category.toLowerCase()] ?? '📍'
+  return CATEGORY_EMOJI[category.toLowerCase()] ?? '🎯'
 }
 
 function AttractionTile({ attraction }: { attraction: Attraction }) {

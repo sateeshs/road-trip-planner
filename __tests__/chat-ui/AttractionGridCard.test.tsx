@@ -39,4 +39,16 @@ describe('AttractionGridCard', () => {
     expect(screen.getByText('Museum')).toBeInTheDocument()
     expect(screen.getByText('Park')).toBeInTheDocument()
   })
+
+  it('shows overflow count when more than 6 attractions', () => {
+    const manyAttractions = Array.from({ length: 9 }, (_, i) => ({
+      id: `a${i}`,
+      name: `Attraction ${i + 1}`,
+      category: 'museum',
+      address: `${i} Main St`,
+      coordinates: { lat: 36.1, lng: -86.7 },
+    }))
+    render(<AttractionGridCard result={{ attractions: manyAttractions as any, city: 'Nashville' }} />)
+    expect(screen.getByText(/\+3 more/i)).toBeInTheDocument()
+  })
 })
