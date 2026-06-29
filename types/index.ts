@@ -170,6 +170,11 @@ export interface SearchSurroundingsResult {
   activities: string[]
 }
 
+export interface SearchRestaurantsResult {
+  restaurants: Attraction[]
+  city: string
+}
+
 export interface RenderUiResult {
   component: 'route_summary' | 'hotel_comparison' | 'day_plan' | 'booking_confirmed' | 'trip_stats'
   title: string

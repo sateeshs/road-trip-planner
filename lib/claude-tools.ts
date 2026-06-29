@@ -712,6 +712,56 @@ export const agentTools = {
       }
     },
   }),
+  search_restaurants: tool({
+    description:
+      'Search for restaurants and dining options near a stop city. ' +
+      'Call once per stop AFTER search_hotels completes. ' +
+      'Uses OpenStreetMap data — returns top dining spots (restaurants, cafes, bars) within 5 km.',
+    parameters: z.object({
+      city: z.string().describe('City name — use the exact canonical name from suggest_route_stops'),
+    }),
+    execute: async ({ city }) => {
+      const coords = await resolveCityCoords(city)
+      if (!coords) return { restaurants: [], city }
+
+      const { lat, lng } = coords
+      const radius = 5000 // 5 km
+
+      // OSM dining query — same mirror-racing pattern as other Overpass calls
+      const ql = `
+[out:json][timeout:12];
+(
+  node["amenity"~"restaurant|cafe|fast_food|food_court|bar|pub|bistro"](around:${radius},${lat},${lng});
+);
+out center 20;`
+
+      const elements = await overpassQuery(ql)
+
+      const restaurants: Attraction[] = elements
+        .filter(el => el.tags?.name)
+        .slice(0, 8)
+        .map(el => {
+          const elLat = el.lat ?? el.center?.lat ?? lat
+          const elLng = el.lon ?? el.center?.lon ?? lng
+          const amenity = el.tags?.amenity ?? 'restaurant'
+          return {
+            id: String(el.id),
+            name: el.tags!.name!,
+            category: amenity,
+            address: [
+              el.tags?.['addr:housenumber'],
+              el.tags?.['addr:street'],
+              el.tags?.['addr:city'],
+            ].filter(Boolean).join(' ') || city,
+            coordinates: { lat: elLat, lng: elLng },
+            description: el.tags?.cuisine ? `Cuisine: ${el.tags.cuisine}` : undefined,
+            website: el.tags?.website,
+          }
+        })
+
+      return { restaurants, city }
+    },
+  }),
   render_ui: tool({
     description:
       'Render a rich UI component in the chat window when a visual summary would be more ' +
