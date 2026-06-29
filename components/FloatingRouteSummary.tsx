@@ -1,6 +1,22 @@
 'use client'
-import type { RouteStop } from '@/types'
+import type { RouteStop, ConfirmedReservation } from '@/types'
 import { useTripContext } from '@/contexts/TripContext'
+
+async function downloadCalendar(stops: RouteStop[], reservations: ConfirmedReservation[]) {
+  const res = await fetch('/api/export-calendar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stops, reservations }),
+  })
+  if (!res.ok) return
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'road-trip.ics'
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 interface FloatingRouteSummaryProps {
   stops: RouteStop[]
@@ -15,7 +31,7 @@ interface FloatingRouteSummaryProps {
 export default function FloatingRouteSummary({
   stops, totalDistance, totalDuration, bookingCount = 0, membersCount = 0, onItineraryClick, onMembersClick,
 }: FloatingRouteSummaryProps) {
-  const { handleOptimizeRoute, isOptimizing, isLoading, planActivities, setPlanOpen, estimatedTripCost } = useTripContext()
+  const { handleOptimizeRoute, isOptimizing, isLoading, planActivities, setPlanOpen, estimatedTripCost, confirmedReservations } = useTripContext()
 
   if (stops.length < 2) return null
   const origin = stops[0].city
@@ -114,6 +130,18 @@ export default function FloatingRouteSummary({
               {bookingCount}
             </span>
           )}
+        </button>
+      )}
+
+      {/* Calendar export button — only shown when at least one reservation is confirmed */}
+      {confirmedReservations.length > 0 && (
+        <button
+          onClick={() => downloadCalendar(stops, confirmedReservations)}
+          title="Export trip to calendar (.ics)"
+          className="flex items-center gap-1.5 bg-white/90 backdrop-blur-md border border-white/50 shadow-lg rounded-full px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white hover:text-gray-900 transition-colors"
+        >
+          📅
+          <span className="hidden sm:inline">Export</span>
         </button>
       )}
 
