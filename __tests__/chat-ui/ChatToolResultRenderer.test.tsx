@@ -52,6 +52,6 @@ describe('ChatToolResultRenderer', () => {
   it('renders a card for explore_surroundings with valid result', () => {
     const part = makePart('explore_surroundings', { surroundings: [], city: 'Pigeon Forge', activities: [] })
     render(<ChatToolResultRenderer part={part} />)
-    expect(screen.getByText(/Pigeon Forge/i)).toBeInTheDocument()
+    expect(screen.getByText(/Surroundings · Pigeon Forge/i)).toBeInTheDocument()
   })
 })
