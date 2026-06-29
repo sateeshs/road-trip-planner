@@ -8,6 +8,8 @@
 import { useEffect, useRef } from 'react'
 import { useTripContext } from '@/contexts/TripContext'
 import { AssistantMarkdown, TypingDots } from './ChatShared'
+import ChatToolResultRenderer from './chat-ui/ChatToolResultRenderer'
+import type { ToolInvocationPart } from '@/types'
 
 interface ChatModalProps {
   onClose: () => void
@@ -76,7 +78,9 @@ export default function ChatModal({ onClose }: ChatModalProps) {
     if (m.role === 'user') return true
     const text = getMessageText(m as Parameters<typeof getMessageText>[0])
     const steps = getToolSteps(m as Parameters<typeof getToolSteps>[0])
-    return text.trim().length > 0 || steps.length > 0
+    const hasToolResults = ((m as { parts?: ToolInvocationPart[] }).parts ?? [])
+      .some(p => p.type === 'tool-invocation' && p.toolInvocation?.state === 'result')
+    return text.trim().length > 0 || steps.length > 0 || hasToolResults
   })
 
   const aiResponseCount = visibleMessages.filter(m => m.role !== 'user').length
@@ -171,6 +175,15 @@ export default function ChatModal({ onClose }: ChatModalProps) {
                           <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">AI Assistant</span>
                           <span className="text-[10px] text-gray-300">· #{responseNum}</span>
                         </div>
+                        {/* Rich UI cards for completed tool results */}
+                        {((m as { parts?: ToolInvocationPart[] }).parts ?? [])
+                          .filter((p): p is ToolInvocationPart =>
+                            p.type === 'tool-invocation' && p.toolInvocation?.state === 'result'
+                          )
+                          .map(part => (
+                            <ChatToolResultRenderer key={part.toolInvocation.toolCallId} part={part} />
+                          ))
+                        }
                         <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200 shadow-sm px-6 py-4">
                           {/* Tool steps (shown when no text yet) */}
                           {steps.length > 0 && !text && (
