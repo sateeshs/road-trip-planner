@@ -20,13 +20,13 @@ function TripStatsCard({ title, data }: { title: string; data: Record<string, un
     <div className="bg-white border border-indigo-100 rounded-2xl shadow-sm overflow-hidden my-2">
       <CardHeader icon="📊" title={title} colorClass="bg-indigo-600" />
       <div className="px-4 py-3 grid grid-cols-2 gap-3">
-        {data.totalDistance && (
+        {data.totalDistance != null && (
           <div>
             <p className="text-[10px] text-gray-400 uppercase tracking-wide">Distance</p>
             <p className="text-sm font-bold text-gray-900">{String(data.totalDistance)}</p>
           </div>
         )}
-        {data.totalDuration && (
+        {data.totalDuration != null && (
           <div>
             <p className="text-[10px] text-gray-400 uppercase tracking-wide">Drive Time</p>
             <p className="text-sm font-bold text-gray-900">{String(data.totalDuration)}</p>
@@ -38,7 +38,7 @@ function TripStatsCard({ title, data }: { title: string; data: Record<string, un
             <p className="text-sm font-bold text-gray-900">{String(data.stopCount)}</p>
           </div>
         )}
-        {data.estimatedCost && (
+        {data.estimatedCost != null && (
           <div>
             <p className="text-[10px] text-gray-400 uppercase tracking-wide">Est. Cost</p>
             <p className="text-sm font-bold text-gray-900">{String(data.estimatedCost)}</p>

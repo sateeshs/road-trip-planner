@@ -52,6 +52,7 @@ describe('DynamicUICard', () => {
     }
     render(<DynamicUICard result={result} />)
     expect(screen.getByText(/Trip Itinerary/)).toBeInTheDocument()
+    expect(screen.getByText(/Indianapolis, IN/)).toBeInTheDocument()
   })
 
   it('renders hotel_comparison component', () => {
@@ -67,5 +68,6 @@ describe('DynamicUICard', () => {
     }
     render(<DynamicUICard result={result} />)
     expect(screen.getByText(/Hotel Options/)).toBeInTheDocument()
+    expect(screen.getByText('Grand Hyatt')).toBeInTheDocument()
   })
 })
