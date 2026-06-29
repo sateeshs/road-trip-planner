@@ -3,6 +3,8 @@
 import { useEffect, useRef } from 'react'
 import type { Message } from 'ai'
 import { AssistantMarkdown, TypingDots } from './ChatShared'
+import ChatToolResultRenderer from './chat-ui/ChatToolResultRenderer'
+import type { ToolInvocationPart } from '@/types'
 
 interface ChatPanelProps {
   messages: Message[]
@@ -126,8 +128,17 @@ export default function ChatPanel({
               return typeof m.content === 'string' ? m.content : ''
             })()
 
-            // Skip messages with nothing to display
-            if (!textContent.trim() && m.role !== 'user') return null
+            // Extract completed tool-invocation parts for rich UI rendering
+            const toolResultParts = (() => {
+              const p = (m as { parts?: ToolInvocationPart[] }).parts ?? []
+              return p.filter(
+                (part): part is ToolInvocationPart =>
+                  part.type === 'tool-invocation' && part.toolInvocation?.state === 'result'
+              )
+            })()
+
+            // Skip messages with nothing to show
+            if (!textContent.trim() && toolResultParts.length === 0 && m.role !== 'user') return null
 
             return (
               <div key={m.id} className={`flex gap-2.5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -142,11 +153,20 @@ export default function ChatPanel({
                       {textContent || m.content}
                     </div>
                   ) : (
-                    <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200/80 shadow-sm px-4 py-3">
-                      <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-widest mb-2">
-                        AI Assistant
-                      </p>
-                      <AssistantMarkdown content={textContent} />
+                    <div>
+                      {/* Rich UI cards for tool results */}
+                      {toolResultParts.map(part => (
+                        <ChatToolResultRenderer key={part.toolInvocation.toolCallId} part={part} />
+                      ))}
+                      {/* Text response */}
+                      {textContent.trim() && (
+                        <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200/80 shadow-sm px-4 py-3">
+                          <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-widest mb-2">
+                            AI Assistant
+                          </p>
+                          <AssistantMarkdown content={textContent} />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
