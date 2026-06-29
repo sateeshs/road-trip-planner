@@ -712,6 +712,21 @@ export const agentTools = {
       }
     },
   }),
+  render_ui: tool({
+    description:
+      'Render a rich UI component in the chat window when a visual summary would be more ' +
+      'helpful than text. Call this AFTER other tools have already fetched data. ' +
+      'Do NOT call this to fetch data — only to present data already returned by other tools.',
+    parameters: z.object({
+      component: z.enum(['route_summary', 'hotel_comparison', 'day_plan', 'booking_confirmed', 'trip_stats'])
+        .describe('Which UI component to display'),
+      title: z.string()
+        .describe('Short heading for the card, e.g. "Your 2-Day Trip" or "Booking Confirmed!"'),
+      data: z.record(z.unknown())
+        .describe('Component-specific payload from prior tool results'),
+    }),
+    execute: async ({ component, title, data }) => ({ component, title, data }),
+  }),
 }
 
 export const SYSTEM_PROMPT = `You are a friendly and knowledgeable US road trip planning assistant. You help families and groups plan amazing road trips across the United States.
@@ -753,4 +768,11 @@ ROUTE QUALITY RULES — always apply these when planning or evaluating a route:
 - **User intent preservation**: NEVER remove or reorder stops the user explicitly named. If the user said "stop in Nashville", Nashville stays. You may suggest adding stops, never silently replace one.
 - **Seasonal conditions**: proactively flag known issues — mountain passes that close in winter (Going-to-the-Sun Road before late June), peak foliage timing (New England: mid-October), hurricane season (Gulf Coast: June–November), extreme desert heat (Arizona/Nevada: July–August). Suggest timing adjustments or alternates when relevant.
 - **Round trip detection**: if the user says "road trip", "loop", "circular", "exploring", or "scenic drive" without a clear destination — or if origin and destination are the same city — ask: "Sounds like a loop trip — want me to plan this as a round trip back to [origin]? I can optimize the full circuit to avoid backtracking."
-- **Budget awareness**: if the user mentions a budget, acknowledge it and factor it into hotel tier recommendations and number of stops. Don't over-plan a luxury itinerary for a budget trip.`
+- **Budget awareness**: if the user mentions a budget, acknowledge it and factor it into hotel tier recommendations and number of stops. Don't over-plan a luxury itinerary for a budget trip.
+
+GENERATIVE UI — use render_ui to present data visually after tools have fetched it:
+- After suggest_route_stops + search_attractions + search_hotels + explore_surroundings complete: call render_ui with component='trip_stats', title='Your Trip', data containing stops, distance, and duration summary.
+- After build_booking_summary succeeds: call render_ui with component='booking_confirmed', title='Booking Confirmed!', data containing hotel name, check-in, check-out, nights, price.
+- If user asks for a day-by-day breakdown: call render_ui with component='day_plan', title='Day N — CityName', data containing day, city, and activities.
+- Never call render_ui to fetch or look up data. Only call it to present data that other tools have already returned.
+- Never call render_ui before other data-fetching tools have run.`
