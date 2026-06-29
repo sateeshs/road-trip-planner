@@ -1,11 +1,12 @@
 'use client'
 
 import type { ToolInvocationPart } from '@/types'
-import type { SuggestRouteStopsResult, SearchHotelsResult, SearchAttractionsResult, SearchSurroundingsResult, RenderUiResult } from '@/types'
+import type { SuggestRouteStopsResult, SearchHotelsResult, SearchAttractionsResult, SearchSurroundingsResult, SearchRestaurantsResult, RenderUiResult } from '@/types'
 import RouteSummaryCard from './RouteSummaryCard'
 import HotelResultsCard from './HotelResultsCard'
 import AttractionGridCard from './AttractionGridCard'
 import SurroundingsCard from './SurroundingsCard'
+import RestaurantCard from './RestaurantCard'
 import DynamicUICard from './DynamicUICard'
 
 interface Props {
@@ -27,6 +28,9 @@ export default function ChatToolResultRenderer({ part }: Props) {
 
     case 'search_attractions':
       return <AttractionGridCard result={result as SearchAttractionsResult} />
+
+    case 'search_restaurants':
+      return <RestaurantCard result={result as SearchRestaurantsResult} />
 
     case 'explore_surroundings':
       return <SurroundingsCard result={result as SearchSurroundingsResult} />
