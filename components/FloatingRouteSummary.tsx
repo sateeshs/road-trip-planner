@@ -15,7 +15,7 @@ interface FloatingRouteSummaryProps {
 export default function FloatingRouteSummary({
   stops, totalDistance, totalDuration, bookingCount = 0, membersCount = 0, onItineraryClick, onMembersClick,
 }: FloatingRouteSummaryProps) {
-  const { handleOptimizeRoute, isOptimizing, isLoading, planActivities, setPlanOpen } = useTripContext()
+  const { handleOptimizeRoute, isOptimizing, isLoading, planActivities, setPlanOpen, estimatedTripCost } = useTripContext()
 
   if (stops.length < 2) return null
   const origin = stops[0].city
@@ -55,6 +55,17 @@ export default function FloatingRouteSummary({
             <span className="text-gray-300 mx-1">|</span>
             {totalDistance && <span className="text-gray-500">{totalDistance}</span>}
             {totalDuration && <span className="text-gray-500">{`· ${totalDuration}`}</span>}
+          </>
+        )}
+        {estimatedTripCost && (
+          <>
+            <span className="text-gray-300 mx-1">|</span>
+            <span className={`text-xs font-medium ${estimatedTripCost.confirmed ? 'text-green-600' : 'text-gray-500'}`}>
+              {estimatedTripCost.confirmed
+                ? `$${estimatedTripCost.min.toLocaleString()} booked`
+                : `Est. $${estimatedTripCost.min.toLocaleString()}–$${estimatedTripCost.max.toLocaleString()}`
+              }
+            </span>
           </>
         )}
       </div>

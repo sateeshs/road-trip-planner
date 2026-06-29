@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
 import { useChat } from 'ai/react'
 import type { BookingSummary } from '@/components/BookingReviewModal'
 import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, ConfirmedReservation, PlanActivity } from '@/types'
@@ -109,6 +109,9 @@ export interface TripContextValue {
   membersCount: number
   saveTripToDb: () => Promise<void>
   loadTripFromDb: (id: string) => Promise<void>
+
+  // Per-trip cost estimate
+  estimatedTripCost: { min: number; max: number; confirmed: boolean } | null
 }
 
 // ─── Context ────────────────────────────────────────────────────────────────
@@ -296,6 +299,30 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const allHotels = Object.values(hotelsByCity).flat()
   const allAttractions = Object.values(attractionsByCity).flat()
   const allSurroundings = Object.values(surroundingsByCity).flat()
+
+  // ── Per-trip cost estimate ──
+  // If reservations exist, use their confirmed totals. Otherwise, estimate from hotel prices.
+  // Only intermediate stops (excluding origin and destination) are counted.
+  const estimatedTripCost = useMemo((): { min: number; max: number; confirmed: boolean } | null => {
+    if (confirmedReservations.length > 0) {
+      const total = confirmedReservations.reduce((sum, r) => sum + r.totalPrice, 0)
+      return { min: total, max: total, confirmed: true }
+    }
+    let min = 0
+    let max = 0
+    for (const stop of stops.slice(1)) {
+      const hotels = hotelsByCity[stop.city] ?? []
+      const prices = hotels
+        .map((h: Hotel) => h.pricePerNight ?? 0)
+        .filter((p: number) => p > 0)
+        .sort((a: number, b: number) => a - b)
+      if (prices.length === 0) continue
+      const nights = stop.stayNights || 1
+      min += prices[0] * nights
+      max += prices[Math.min(2, prices.length - 1)] * nights
+    }
+    return min > 0 ? { min, max, confirmed: false } : null
+  }, [stops, hotelsByCity, confirmedReservations])
 
   // ── Handlers ──
 
@@ -823,6 +850,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
     membersCount,
     saveTripToDb,
     loadTripFromDb,
+    estimatedTripCost,
   }
 
   return <TripContext.Provider value={value}>{children}</TripContext.Provider>
