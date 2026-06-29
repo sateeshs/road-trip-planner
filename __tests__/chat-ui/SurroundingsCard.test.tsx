@@ -48,4 +48,11 @@ describe('SurroundingsCard', () => {
     fireEvent.click(screen.getByText(/Show all/i))
     expect(screen.getByText(/Show less/i)).toBeInTheDocument()
   })
+
+  it('does not render groups with zero matching activities', () => {
+    const waterOnly = makeSurroundings(['Kayaking', 'Boat Tour / Cruise'])
+    render(<SurroundingsCard result={{ surroundings: waterOnly, city: 'Gatlinburg', activities: [] }} />)
+    expect(screen.getByText(/Water/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Land/i)).not.toBeInTheDocument()
+  })
 })
