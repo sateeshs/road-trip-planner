@@ -3,16 +3,18 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
 import { useChat } from 'ai/react'
 import type { BookingSummary } from '@/components/BookingReviewModal'
-import type { RouteStop, Hotel, Attraction, HotelOffer, RouteGeometry, ConfirmedReservation, PlanActivity } from '@/types'
+import type { RouteStop, Hotel, Attraction, RouteGeometry, ConfirmedReservation, PlanActivity } from '@/types'
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
 import { reverseGeocode } from '@/lib/route-utils'
-import { optimizeRoute, runNSGAII } from '@/lib/route-optimizer'
+import { runNSGAII } from '@/lib/route-optimizer'
 import type { ParetoRoute } from '@/lib/route-optimizer'
 import { getTimeMatrix, getRoute, metersToMiles, secondsToTime } from '@/lib/osrm-client'
 import { scoreStops, buildStopWeights } from '@/lib/stop-scorer'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
 import type { Message } from 'ai'
+import { extractToolResults } from './trip-tool-results'
+import type { ToolInvocationPart } from './trip-tool-results'
 
 // ─── Shape ─────────────────────────────────────────────────────────────────
 
@@ -124,44 +126,20 @@ export function useTripContext(): TripContextValue {
   return ctx
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Finds the stop whose city name best matches the AI-provided city string.
- * The AI often uses a nearby city name instead of the exact stop name
- * (e.g. "Munising" for a "Pictured Rocks" stop, or "Sault Ste. Marie" for "Soo Locks").
- * Matching logic: exact → prefix → word overlap.
- */
-function findMatchingStop(stops: RouteStop[], aiCity: string): RouteStop | undefined {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const key = norm(aiCity)
-  // 1. Exact match
-  const exact = stops.find(s => norm(s.city) === key)
-  if (exact) return exact
-  // 2. One contains the other
-  const contains = stops.find(s => key.includes(norm(s.city)) || norm(s.city).includes(key))
-  if (contains) return contains
-  // 3. Any word overlap
-  const aiWords = key.split(/\s+/).filter(w => w.length > 2)
-  return stops.find(s => aiWords.some(w => norm(s.city).includes(w)))
-}
-
 // ─── Provider ───────────────────────────────────────────────────────────────
 
 export function TripProvider({ children }: { children: ReactNode }) {
-  // ── Route state ──
+  // Route state
   const [stops, setStops] = useState<RouteStop[]>([])
   const [routeGeometry, setRouteGeometry] = useState<RouteGeometry | null>(null)
   const [totalDistance, setTotalDistance] = useState<string | null>(null)
   const [totalDuration, setTotalDuration] = useState<string | null>(null)
-
-  // ── Per-city POI state ──
+  // Per-city POI state
   const [hotelsByCity, setHotelsByCity] = useState<Record<string, Hotel[]>>({})
   const [attractionsByCity, setAttractionsByCity] = useState<Record<string, Attraction[]>>({})
   const [surroundingsByCity, setSurroundingsByCity] = useState<Record<string, Attraction[]>>({})
   const [isSurroundingsLoading, setIsSurroundingsLoading] = useState(false)
-
-  // ── Selection / UI state ──
+  // Selection / UI state
   const [selectedStop, setSelectedStop] = useState<RouteStop | null>(null)
   const [confirmedReservations, setConfirmedReservations] = useState<ConfirmedReservation[]>([])
   const [bookingSummary, setBookingSummary] = useState<BookingSummary | null>(null)
@@ -179,10 +157,8 @@ export function TripProvider({ children }: { children: ReactNode }) {
     } catch { return [] }
   })
   const [planOpen, setPlanOpen] = useState(false)
-
-  // ── Trip style preferences ──
+  // Trip style preferences
   const [tripStyles, setTripStyles] = useState<string[]>([])
-
   const toggleTripStyle = useCallback((style: string) => {
     setTripStyles(prev =>
       prev.includes(style) ? prev.filter(s => s !== style) : [...prev, style]
@@ -220,76 +196,47 @@ export function TripProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     for (const msg of messages) {
       if (processedIds.current.has(msg.id)) continue
-      type Part = { type: string; toolInvocation?: { toolName: string; state: string; result?: unknown } }
-      const parts = (msg as { parts?: Part[] }).parts ?? []
+      const parts = ((msg as { parts?: ToolInvocationPart[] }).parts ?? [])
 
-      // ── Pass 1: collect new stops from suggest_route_stops so subsequent
-      //    tools (search_attractions, search_hotels) can do city-name fuzzy
-      //    matching without relying on React state that may not have committed yet.
-      let batchStops: RouteStop[] = stopsRef.current
-      for (const part of parts) {
-        if (part.type !== 'tool-invocation') continue
-        const ti = part.toolInvocation
-        if (!ti || ti.state !== 'result') continue
-        const result = ti.result as Record<string, unknown>
-        if (ti.toolName === 'suggest_route_stops' && result?.stops) {
-          batchStops = result.stops as RouteStop[]
-        }
+      const batch = extractToolResults(parts, stopsRef.current)
+
+      // Apply suggest_route_stops results
+      if (batch.newStops) setStops(batch.newStops)
+      if (batch.routeGeometry) setRouteGeometry(batch.routeGeometry)
+      if (batch.totalDistance) setTotalDistance(batch.totalDistance)
+      if (batch.totalDuration) setTotalDuration(batch.totalDuration)
+      if (batch.surroundingsByCityPatch) {
+        const patch = batch.surroundingsByCityPatch
+        setSurroundingsByCity(prev => ({ ...prev, ...patch }))
       }
 
-      // ── Pass 2: apply all tool results
-      for (const part of parts) {
-        if (part.type !== 'tool-invocation') continue
-        const ti = part.toolInvocation
-        if (!ti || ti.state !== 'result') continue
-        const result = ti.result as Record<string, unknown>
-
-        if (ti.toolName === 'suggest_route_stops') {
-          if (result?.stops) setStops(result.stops as RouteStop[])
-          if (result?.routeGeometry) setRouteGeometry(result.routeGeometry as RouteGeometry)
-          if (result?.totalDistance) setTotalDistance(result.totalDistance as string)
-          if (result?.totalDuration) setTotalDuration(result.totalDuration as string)
-          if (result?.surroundingsByCity) {
-            const byCityRaw = result.surroundingsByCity as Record<string, Attraction[]>
-            setSurroundingsByCity(prev => ({ ...prev, ...byCityRaw }))
-          }
-        }
-
-        if (ti.toolName === 'search_hotels' && result?.hotels && result?.city) {
-          const city = result.city as string
-          // Store under both the AI-provided city name AND the canonical stop city name
-          // so the bottom sheet finds data regardless of name drift (e.g. AI uses
-          // "Munising" but stop.city is "Pictured Rocks")
-          const matchedStop = findMatchingStop(batchStops, city)
-          setHotelsByCity(h => ({
-            ...h,
-            [city]: result.hotels as Hotel[],
-            ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.hotels as Hotel[] } : {}),
-          }))
-        }
-
-        if (ti.toolName === 'search_attractions' && result?.attractions && result?.city) {
-          const city = result.city as string
-          const matchedStop = findMatchingStop(batchStops, city)
-          setAttractionsByCity(a => ({
-            ...a,
-            [city]: result.attractions as Attraction[],
-            ...(matchedStop && matchedStop.city !== city ? { [matchedStop.city]: result.attractions as Attraction[] } : {}),
-          }))
-        }
-
-        if (ti.toolName === 'explore_surroundings') {
-          if (result?.surroundings && result?.city) {
-            const city = result.city as string
-            setSurroundingsByCity(prev => ({ ...prev, [city]: result.surroundings as Attraction[] }))
-          }
-          setIsSurroundingsLoading(false)
-        }
-
-        if (ti.toolName === 'build_booking_summary' && result?.summary) {
-          setBookingSummary(result.summary as BookingSummary)
-        }
+      // Apply hotel results — store under AI city name AND matched stop city name
+      // so the bottom sheet finds data regardless of city-name drift
+      for (const { city, hotels, matchedCity } of batch.hotelPatches) {
+        setHotelsByCity(h => ({
+          ...h,
+          [city]: hotels,
+          ...(matchedCity ? { [matchedCity]: hotels } : {}),
+        }))
       }
+
+      // Apply attraction results
+      for (const { city, attractions, matchedCity } of batch.attractionPatches) {
+        setAttractionsByCity(a => ({
+          ...a,
+          [city]: attractions,
+          ...(matchedCity ? { [matchedCity]: attractions } : {}),
+        }))
+      }
+
+      // Apply surroundings results
+      for (const { city, surroundings } of batch.surroundingsPatches) {
+        setSurroundingsByCity(prev => ({ ...prev, [city]: surroundings }))
+      }
+      if (batch.surroundingsCompleted) setIsSurroundingsLoading(false)
+
+      // Apply booking summary
+      if (batch.bookingSummary) setBookingSummary(batch.bookingSummary)
 
       if (!isLoading) processedIds.current.add(msg.id)
     }
@@ -300,9 +247,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const allAttractions = Object.values(attractionsByCity).flat()
   const allSurroundings = Object.values(surroundingsByCity).flat()
 
-  // ── Per-trip cost estimate ──
-  // If reservations exist, use their confirmed totals. Otherwise, estimate from hotel prices.
-  // Only intermediate stops (excluding origin and destination) are counted.
+  // ── Per-trip cost estimate (confirmed reservations take precedence; otherwise estimate from hotel prices) ──
   const estimatedTripCost = useMemo((): { min: number; max: number; confirmed: boolean } | null => {
     if (confirmedReservations.length > 0) {
       const total = confirmedReservations.reduce((sum, r) => sum + r.totalPrice, 0)
@@ -325,7 +270,6 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [stops, hotelsByCity, confirmedReservations])
 
   // ── Handlers ──
-
   const handleExploreSurroundings = useCallback(async (city: string, state: string, categories: SurroundingsCategory[]) => {
     setSurroundingsByCity(prev => { const n = { ...prev }; delete n[city]; return n })
     setIsSurroundingsLoading(true)
@@ -639,9 +583,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [stops, append])
 
   // ── Trip persistence ──
-
   const saveTripToDb = useCallback(async () => {
-    // Require session (next-auth) — session is available via fetch /api/auth/session
     const body = {
       title: stops.length >= 2 ? `${stops[0].city} → ${stops[stops.length - 1].city}` : 'New Trip',
       stops,

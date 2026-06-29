@@ -48,6 +48,7 @@ describe('AttractionGridCard', () => {
       address: `${i} Main St`,
       coordinates: { lat: 36.1, lng: -86.7 },
     }))
+    // cast needed: test intentionally uses partial data to verify graceful max-6 capping
     render(<AttractionGridCard result={{ attractions: manyAttractions as any, city: 'Nashville' }} />)
     expect(screen.getByText(/\+3 more/i)).toBeInTheDocument()
   })

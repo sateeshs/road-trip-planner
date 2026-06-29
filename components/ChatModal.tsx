@@ -95,7 +95,7 @@ export default function ChatModal({ onClose }: ChatModalProps) {
 
       {/* Modal */}
       <div className="fixed inset-0 z-[3600] flex items-center justify-center p-4 sm:p-8 pointer-events-none">
-        <div className="pointer-events-auto w-full max-w-5xl h-[90vh] bg-white rounded-3xl shadow-2xl flex flex-col border border-gray-200" style={{ overflow: 'hidden' }}>
+        <div className="pointer-events-auto w-full max-w-5xl h-[90vh] bg-white rounded-3xl shadow-2xl flex flex-col border border-gray-200 overflow-hidden">
 
           {/* ── Header ── */}
           <div className="flex-none flex items-center justify-between px-8 py-4 border-b border-gray-100 bg-white">

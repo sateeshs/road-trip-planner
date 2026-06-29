@@ -31,12 +31,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ tripId: 
   const { tripId } = await params
   const trip = await getAuthorizedTrip(tripId, session.user.email)
   if (!trip) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  const body = await req.json()
-  const allowed = ['title','stops','routeGeometry','totalDistance','totalDuration','hotelsByCity','attractionsByCity','surroundingsByCity','confirmedReservations','planActivities']
-  for (const key of allowed) {
-    if (key in body) (trip as Record<string, unknown>)[key] = body[key]
+  const body = await req.json() as Record<string, unknown>
+  const ALLOWED_FIELDS = [
+    'title', 'stops', 'routeGeometry', 'totalDistance', 'totalDuration',
+    'hotelsByCity', 'attractionsByCity', 'surroundingsByCity',
+    'confirmedReservations', 'planActivities',
+  ] as const
+  for (const key of ALLOWED_FIELDS) {
+    if (key in body) trip[key] = body[key]
   }
-  trip.updatedAt = new Date()
   await trip.save()
   return NextResponse.json({ ok: true })
 }
