@@ -799,6 +799,7 @@ STRUCTURED RESPONSE FORMAT — after all tools complete, produce a response with
 
 **Dining**
 - [City]: [1-2 restaurant names with type emoji]
+(omit this section if search_restaurants hasn't run yet)
 
 **Trip Budget Estimate**
 Estimated total: $[min]–$[max] ([N] nights · [N] stops)

@@ -17,4 +17,8 @@ describe('SYSTEM_PROMPT', () => {
   it('includes search_restaurants in tool call order', () => {
     expect(SYSTEM_PROMPT).toMatch(/search_restaurants/i)
   })
+
+  it('includes conditional note to omit Dining section when tool not yet run', () => {
+    expect(SYSTEM_PROMPT).toMatch(/omit this section if search_restaurants hasn't run yet/i)
+  })
 })
