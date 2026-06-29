@@ -55,10 +55,10 @@ function BookingConfirmedCard({ title, data }: { title: string; data: Record<str
     <div className="bg-white border border-purple-100 rounded-2xl shadow-sm overflow-hidden my-2">
       <CardHeader icon="✅" title={title} colorClass="bg-purple-600" />
       <div className="px-4 py-3 space-y-1.5">
-        {data.hotelName && (
+        {!!data.hotelName && (
           <p className="text-sm font-bold text-gray-900">{String(data.hotelName)}</p>
         )}
-        {(data.checkIn || data.checkOut) && (
+        {!!(data.checkIn || data.checkOut) && (
           <p className="text-xs text-gray-500">
             {`${String(data.checkIn ?? '')} → ${String(data.checkOut ?? '')}`}
           </p>
@@ -100,13 +100,13 @@ function RouteSummaryCard({ title, data }: { title: string; data: Record<string,
     <div className="bg-white border border-purple-100 rounded-2xl shadow-sm overflow-hidden my-2">
       <CardHeader icon="🗺️" title={title} colorClass="bg-purple-600" />
       <div className="px-4 py-3 space-y-1.5">
-        {data.origin && (
+        {!!data.origin && (
           <p className="text-xs text-gray-500">{`From: ${String(data.origin)}`}</p>
         )}
         {stops.map((stop, i) => (
           <p key={i} className="text-xs text-gray-600 pl-3">{`· ${stop}`}</p>
         ))}
-        {data.destination && (
+        {!!data.destination && (
           <p className="text-xs text-gray-500">{`To: ${String(data.destination)}`}</p>
         )}
       </div>
@@ -126,11 +126,11 @@ function HotelComparisonCard({ title, data }: { title: string; data: Record<stri
           <div key={i} className="flex items-center justify-between border-b border-gray-100 pb-2 last:border-0 last:pb-0">
             <div>
               <p className="text-sm font-semibold text-gray-900">{String(hotel.name ?? '')}</p>
-              {hotel.stars != null && (
+              {!!hotel.stars && (
                 <p className="text-[10px] text-yellow-500">{'★'.repeat(Number(hotel.stars))}</p>
               )}
             </div>
-            {hotel.price != null && (
+            {!!hotel.price && (
               <p className="text-sm font-bold text-indigo-700">{`$${String(hotel.price)}/night`}</p>
             )}
           </div>
