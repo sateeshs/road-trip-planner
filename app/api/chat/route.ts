@@ -125,19 +125,20 @@ export async function POST(req: Request) {
         },
       })
 
-      // Consume the first chunk to detect immediate 429/503 before committing the stream.
-      // fullStream is an async iterable; peek at the first event then re-stream everything.
-      const reader = result.toDataStream().getReader()
+      // Use toDataStreamResponse() for proper AI SDK headers (incl. x-vercel-ai-data-stream: v1).
+      // Peek at the first chunk to detect an immediate 429/503 error chunk before committing.
+      // AI SDK data stream error chunks start with "3:" — if we see one, try the next model.
+      const sdkResponse = result.toDataStreamResponse()
+      const reader = sdkResponse.body!.getReader()
       const first = await reader.read()
 
-      // Check if the stream immediately errored (empty or error chunk)
-      if (first.done) {
-        // Empty stream — likely model error; try next
-        console.warn(`[OpenRouter] Empty stream from ${modelId}, trying next model`)
+      const firstText = first.value ? new TextDecoder().decode(first.value) : ''
+      if (first.done || firstText.startsWith('3:')) {
+        console.warn(`[OpenRouter] Model ${modelId} errored immediately (chunk="${firstText.slice(0, 40)}"), trying next`)
         continue
       }
 
-      // Stream started successfully — pipe remainder back to client
+      // Stream started successfully — pipe the remainder, preserving SDK response headers.
       const stream = new ReadableStream({
         start(controller) {
           if (first.value) controller.enqueue(first.value)
@@ -153,12 +154,11 @@ export async function POST(req: Request) {
         cancel() { reader.cancel() },
       })
 
-      return new Response(stream, {
-        headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'X-Model-Used': modelId,
-        },
-      })
+      // Copy all headers from toDataStreamResponse() — this includes x-vercel-ai-data-stream: v1
+      // which useChat requires to parse multi-turn conversations correctly.
+      const headers = new Headers(sdkResponse.headers)
+      headers.set('X-Model-Used', modelId)
+      return new Response(stream, { headers })
     } catch (err: unknown) {
       const status = (err as { statusCode?: number })?.statusCode
       const isRateLimit = status === 429 || status === 503
