@@ -45,11 +45,30 @@ export interface ToolResultBatch {
 // ─── MCP result parser ───────────────────────────────────────────────────────
 
 /**
- * Safely parses a tool result that may be a JSON string (MCP mode) or
- * a plain object (inline mode). MCP tools serialize result content as
- * `content[0].text`, which the AI SDK passes to the LLM as a JSON string.
+ * Safely parses a tool result that may be:
+ * - An MCP envelope: { content: [{ type: 'text', text: '{"hotels":[...]}' }] }
+ * - A plain JSON string (some SDK versions serialize result as string)
+ * - A plain object (inline tool mode)
+ *
+ * MCP tools via experimental_createMCPClient return the raw MCP content
+ * envelope as toolInvocation.result. We unwrap it here so all downstream
+ * code can access result.hotels, result.stops, etc. directly.
  */
 export function parseResult<T>(result: unknown): T {
+  // Handle MCP envelope: { content: [{ type: 'text', text: '<json>' }] }
+  if (
+    result !== null &&
+    typeof result === 'object' &&
+    'content' in result &&
+    Array.isArray((result as { content: unknown[] }).content)
+  ) {
+    const content = (result as { content: Array<{ type: string; text?: string }> }).content
+    const textItem = content.find(c => c.type === 'text' && typeof c.text === 'string')
+    if (textItem?.text) {
+      try { return JSON.parse(textItem.text) as T } catch { /* fall through to string check */ }
+    }
+  }
+  // Handle plain JSON string
   if (typeof result === 'string') {
     try { return JSON.parse(result) as T } catch { return result as unknown as T }
   }

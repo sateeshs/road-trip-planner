@@ -45,7 +45,7 @@ function HotelRow({ hotel }: { hotel: Hotel }) {
 }
 
 export default function HotelResultsCard({ result }: Props) {
-  const { hotels, city } = result
+  const { hotels = [], city } = result
   const topHotels = [...hotels].sort((a, b) => (a.pricePerNight ?? 999) - (b.pricePerNight ?? 999)).slice(0, 3)
 
   return (

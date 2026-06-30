@@ -7,7 +7,7 @@ interface Props {
 }
 
 export default function RouteSummaryCard({ result }: Props) {
-  const { stops, totalDistance, totalDuration } = result
+  const { stops = [], totalDistance, totalDuration } = result
 
   return (
     <div className="bg-white border border-blue-100 rounded-2xl shadow-sm overflow-hidden my-2">

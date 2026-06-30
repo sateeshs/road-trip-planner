@@ -44,7 +44,7 @@ function AttractionTile({ attraction }: { attraction: Attraction }) {
 }
 
 export default function AttractionGridCard({ result }: Props) {
-  const { attractions, city } = result
+  const { attractions = [], city } = result
   const displayed = attractions.slice(0, 6)
 
   return (
