@@ -707,10 +707,11 @@ export const agentTools = {
         const park = parkData.data?.[0]
         if (!park) return { error: `Park code "${parkCode}" not found in NPS database.` }
 
-        // Parallel fetch alerts + campgrounds if requested
-        const [alertsData, campData] = await Promise.all([
+        // Parallel fetch alerts + campgrounds + thingstodo
+        const [alertsData, campData, thingsData] = await Promise.all([
           includeAlerts ? npsGet(`/alerts?parkCode=${parkCode}&limit=10`) : Promise.resolve(null),
           includeCampgrounds ? npsGet(`/campgrounds?parkCode=${parkCode}&limit=25`) : Promise.resolve(null),
+          npsGet(`/thingstodo?parkCode=${parkCode}&limit=20`),
         ])
 
         // Shape park info
@@ -786,7 +787,41 @@ export const agentTools = {
           }
         }) ?? []
 
-        return { park: info, alerts, campgrounds, parkCode }
+        // Shape thingstodo — official NPS curated activities with duration, difficulty, accessibility
+        const thingsToDo = (thingsData?.data as Array<{
+          title: string
+          shortDescription: string
+          url: string
+          duration: string
+          difficulty: string
+          isReservationRequired: string
+          doFeesApply: string
+          feeDescription: string
+          arePetsPermittedWithRestrictions: string
+          isAccessibleForBlindOrVisuallyImpaired: string
+          isAccessibleForDeafOrHardOfHearing: string
+          isWheelchairAccessible: string
+          latitude: string
+          longitude: string
+          tags: string[]
+          activities: Array<{ name: string }>
+        }> | undefined)?.map(t => ({
+          title: t.title,
+          description: t.shortDescription,
+          url: t.url,
+          duration: t.duration,
+          difficulty: t.difficulty,
+          reservationRequired: t.isReservationRequired === 'true',
+          feesApply: t.doFeesApply === 'true',
+          feeDescription: t.feeDescription || undefined,
+          petsAllowed: t.arePetsPermittedWithRestrictions !== 'false',
+          wheelchairAccessible: t.isWheelchairAccessible === 'true',
+          coordinates: t.latitude && t.longitude ? { lat: parseFloat(t.latitude), lng: parseFloat(t.longitude) } : undefined,
+          tags: t.tags ?? [],
+          activities: (t.activities ?? []).map(a => a.name),
+        })) ?? []
+
+        return { park: info, alerts, campgrounds, thingsToDo, parkCode }
       } catch (err) {
         console.error('NPS API failed:', err)
         return { error: `Could not fetch NPS data for park "${parkCode}". Try a different park code.` }
