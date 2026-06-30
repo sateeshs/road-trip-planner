@@ -43,20 +43,25 @@ async function overpassRace(ql: string, signal: AbortSignal): Promise<OverpassEl
   // Abort all mirrors when the outer signal fires
   signal.addEventListener('abort', () => controllers.forEach(c => c.abort()), { once: true })
 
-  const requests = MIRRORS.map((url, i) =>
-    fetch(url, {
+  const requests = MIRRORS.map((url, i) => {
+    // 30s hard timeout per mirror (server-side Overpass timeout is 25s, so this is a safety net)
+    const timer = setTimeout(() => controllers[i].abort(), 30_000)
+    return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: `data=${encodeURIComponent(ql)}`,
       signal: controllers[i].signal,
     })
-      .then(r => r.ok ? r.json() as Promise<{ elements?: OverpassEl[] }> : Promise.reject())
+      .then(r => r.ok ? r.json() as Promise<{ elements?: OverpassEl[]; remark?: string }> : Promise.reject())
       .then(d => {
+        clearTimeout(timer)
+        if (d.remark) return Promise.reject(new Error('Overpass timeout'))
         // Cancel the other mirrors
         controllers.forEach((c, j) => j !== i && c.abort())
         return d.elements ?? []
       })
-  )
+      .catch(e => { clearTimeout(timer); return Promise.reject(e) })
+  })
 
   try {
     return await Promise.any(requests)
@@ -252,10 +257,10 @@ const PER_STOP_RADIUS_M   = 20000  // ~12.5 miles — wider net for each named s
 const MAX_PER_POINT       = 8
 const MAX_TOTAL           = 20     // increased to accommodate per-stop results
 
-// Uses nwr (node/way/relation) for tourism/historic/natural/leisure so that
-// attractions mapped as buildings or park areas (ways) are included.
-// client-side browser hook — no Edge 30s limit, so nwr is safe here.
-const POI_QUERY = (radius: number, lat: number, lng: number, limit: number) => `[out:json][timeout:15];
+// nwr for tourism/historic/natural/leisure (museums, ruins, parks are often mapped as ways/relations).
+// node-only for sport/amenity/attraction (these are almost always nodes, and node queries are 10x faster).
+// Timeout 25s — nwr queries are slower than node-only; 15s was causing all mirrors to time out.
+const POI_QUERY = (radius: number, lat: number, lng: number, limit: number) => `[out:json][timeout:25];
 (
   nwr["tourism"~"attraction|museum|viewpoint|theme_park|zoo|aquarium"]["name"](around:${radius},${lat},${lng});
   nwr["historic"~"monument|memorial|castle|ruins|archaeological_site"]["name"](around:${radius},${lat},${lng});

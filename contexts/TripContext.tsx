@@ -41,12 +41,14 @@ export interface TripContextValue {
   hotelsByCity: Record<string, Hotel[]>
   attractionsByCity: Record<string, Attraction[]>
   surroundingsByCity: Record<string, Attraction[]>
+  restaurantsByCity: Record<string, Attraction[]>
   isSurroundingsLoading: boolean
 
   // Flat lists for map markers
   allHotels: Hotel[]
   allAttractions: Attraction[]
   allSurroundings: Attraction[]
+  allRestaurants: Attraction[]
 
   // Selection / UI
   selectedStop: RouteStop | null
@@ -145,6 +147,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [hotelsByCity, setHotelsByCity] = useState<Record<string, Hotel[]>>({})
   const [attractionsByCity, setAttractionsByCity] = useState<Record<string, Attraction[]>>({})
   const [surroundingsByCity, setSurroundingsByCity] = useState<Record<string, Attraction[]>>({})
+  const [restaurantsByCity, setRestaurantsByCity] = useState<Record<string, Attraction[]>>({})
   const [isSurroundingsLoading, setIsSurroundingsLoading] = useState(false)
   // Selection / UI state
   const [selectedStop, setSelectedStop] = useState<RouteStop | null>(null)
@@ -276,9 +279,22 @@ export function TripProvider({ children }: { children: ReactNode }) {
         }))
       }
 
-      // Apply surroundings results
-      for (const { city, surroundings } of batch.surroundingsPatches) {
-        setSurroundingsByCity(prev => ({ ...prev, [city]: surroundings }))
+      // Apply surroundings results (with fuzzy city matching, same as hotels/attractions)
+      for (const { city, surroundings, matchedCity } of batch.surroundingsPatches) {
+        setSurroundingsByCity(prev => ({
+          ...prev,
+          [city]: surroundings,
+          ...(matchedCity ? { [matchedCity]: surroundings } : {}),
+        }))
+      }
+
+      // Apply restaurant results
+      for (const { city, restaurants, matchedCity } of batch.restaurantPatches) {
+        setRestaurantsByCity(prev => ({
+          ...prev,
+          [city]: restaurants,
+          ...(matchedCity ? { [matchedCity]: restaurants } : {}),
+        }))
       }
       if (batch.surroundingsCompleted) setIsSurroundingsLoading(false)
 
@@ -293,6 +309,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const allHotels = Object.values(hotelsByCity).flat()
   const allAttractions = Object.values(attractionsByCity).flat()
   const allSurroundings = Object.values(surroundingsByCity).flat()
+  const allRestaurants = Object.values(restaurantsByCity).flat()
 
   // ── Per-trip cost estimate (confirmed reservations take precedence; otherwise estimate from hotel prices) ──
   const estimatedTripCost = useMemo((): { min: number; max: number; confirmed: boolean } | null => {
@@ -367,6 +384,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
     setHotelsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
     setAttractionsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
     setSurroundingsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
+    setRestaurantsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
     setSelectedStop(null)
     if (updatedStops.length >= 2) {
       const cityList = updatedStops.map(s => `${s.city}, ${s.state}`).join(' → ')
@@ -789,10 +807,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
     hotelsByCity,
     attractionsByCity,
     surroundingsByCity,
+    restaurantsByCity,
     isSurroundingsLoading,
     allHotels,
     allAttractions,
     allSurroundings,
+    allRestaurants,
     selectedStop,
     setSelectedStop,
     confirmedReservations,

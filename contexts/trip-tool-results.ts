@@ -6,6 +6,13 @@
 
 import type { RouteStop, Hotel, Attraction, RouteGeometry } from '@/types'
 import type { BookingSummary } from '@/components/BookingReviewModal'
+import {
+  parseSuggestRouteStops,
+  parseSearchAttractions,
+  parseSearchHotels,
+  parseSearchSurroundings,
+  parseSearchRestaurants,
+} from '@/lib/tool-result-schemas'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -33,7 +40,10 @@ export interface ToolResultBatch {
   attractionPatches: Array<{ city: string; attractions: Attraction[]; matchedCity?: string }>
 
   // explore_surroundings results
-  surroundingsPatches: Array<{ city: string; surroundings: Attraction[] }>
+  surroundingsPatches: Array<{ city: string; surroundings: Attraction[]; matchedCity?: string }>
+
+  // search_restaurants results
+  restaurantPatches: Array<{ city: string; restaurants: Attraction[]; matchedCity?: string }>
 
   // build_booking_summary result
   bookingSummary?: BookingSummary
@@ -103,6 +113,10 @@ export function findMatchingStop(stops: RouteStop[], aiCity: string): RouteStop 
  * Extracts all actionable tool results from the parts of a single AI message.
  * Returns a ToolResultBatch that the caller can apply to React state.
  *
+ * All tool results are validated through Zod schemas before being applied
+ * to state — invalid shapes log a warning and use safe empty defaults instead
+ * of crashing the UI or putting corrupt data into the map.
+ *
  * Pass `currentStops` so city-name fuzzy matching works even before
  * React state has committed the new stops from suggest_route_stops.
  */
@@ -114,6 +128,7 @@ export function extractToolResults(
     hotelPatches: [],
     attractionPatches: [],
     surroundingsPatches: [],
+    restaurantPatches: [],
     surroundingsCompleted: false,
   }
 
@@ -125,61 +140,79 @@ export function extractToolResults(
     if (part.type !== 'tool-invocation') continue
     const ti = part.toolInvocation
     if (!ti || ti.state !== 'result') continue
-    const result = parseResult<Record<string, unknown>>(ti.result)
-    if (ti.toolName === 'suggest_route_stops' && result?.stops) {
-      batchStops = result.stops as RouteStop[]
+    if (ti.toolName === 'suggest_route_stops') {
+      const parsed = parseSuggestRouteStops(parseResult(ti.result))
+      if (parsed.stops && parsed.stops.length > 0) batchStops = parsed.stops as RouteStop[]
     }
   }
 
-  // Pass 2: extract all tool results
+  // Pass 2: extract all tool results with Zod validation
   for (const part of parts) {
     if (part.type !== 'tool-invocation') continue
     const ti = part.toolInvocation
     if (!ti || ti.state !== 'result') continue
-    const result = parseResult<Record<string, unknown>>(ti.result)
+    const raw = parseResult(ti.result)
 
     if (ti.toolName === 'suggest_route_stops') {
-      if (result?.stops) batch.newStops = result.stops as RouteStop[]
-      if (result?.routeGeometry) batch.routeGeometry = result.routeGeometry as RouteGeometry
-      if (result?.totalDistance) batch.totalDistance = result.totalDistance as string
-      if (result?.totalDuration) batch.totalDuration = result.totalDuration as string
-      if (result?.surroundingsByCity) {
-        batch.surroundingsByCityPatch = result.surroundingsByCity as Record<string, Attraction[]>
-      }
+      const parsed = parseSuggestRouteStops(raw)
+      if (parsed.stops && parsed.stops.length > 0) batch.newStops = parsed.stops as RouteStop[]
+      if (parsed.routeGeometry) batch.routeGeometry = parsed.routeGeometry as RouteGeometry
+      if (parsed.totalDistance) batch.totalDistance = parsed.totalDistance
+      if (parsed.totalDuration) batch.totalDuration = parsed.totalDuration
     }
 
-    if (ti.toolName === 'search_hotels' && result?.hotels && result?.city) {
-      const city = result.city as string
-      const matchedStop = findMatchingStop(batchStops, city)
-      batch.hotelPatches.push({
-        city,
-        hotels: result.hotels as Hotel[],
-        matchedCity: matchedStop && matchedStop.city !== city ? matchedStop.city : undefined,
-      })
-    }
-
-    if (ti.toolName === 'search_attractions' && result?.attractions && result?.city) {
-      const city = result.city as string
-      const matchedStop = findMatchingStop(batchStops, city)
-      batch.attractionPatches.push({
-        city,
-        attractions: result.attractions as Attraction[],
-        matchedCity: matchedStop && matchedStop.city !== city ? matchedStop.city : undefined,
-      })
-    }
-
-    if (ti.toolName === 'explore_surroundings') {
-      batch.surroundingsCompleted = true
-      if (result?.surroundings && result?.city) {
-        batch.surroundingsPatches.push({
-          city: result.city as string,
-          surroundings: result.surroundings as Attraction[],
+    if (ti.toolName === 'search_hotels') {
+      const parsed = parseSearchHotels(raw)
+      if (parsed.city) {
+        const matchedStop = findMatchingStop(batchStops, parsed.city)
+        batch.hotelPatches.push({
+          city: parsed.city,
+          hotels: parsed.hotels as Hotel[],
+          matchedCity: matchedStop && matchedStop.city !== parsed.city ? matchedStop.city : undefined,
         })
       }
     }
 
-    if (ti.toolName === 'build_booking_summary' && result?.summary) {
-      batch.bookingSummary = result.summary as BookingSummary
+    if (ti.toolName === 'search_attractions') {
+      const parsed = parseSearchAttractions(raw)
+      if (parsed.city) {
+        const matchedStop = findMatchingStop(batchStops, parsed.city)
+        batch.attractionPatches.push({
+          city: parsed.city,
+          attractions: parsed.attractions as Attraction[],
+          matchedCity: matchedStop && matchedStop.city !== parsed.city ? matchedStop.city : undefined,
+        })
+      }
+    }
+
+    if (ti.toolName === 'explore_surroundings') {
+      batch.surroundingsCompleted = true
+      const parsed = parseSearchSurroundings(raw)
+      if (parsed.city) {
+        const matchedStop = findMatchingStop(batchStops, parsed.city)
+        batch.surroundingsPatches.push({
+          city: parsed.city,
+          surroundings: parsed.surroundings as Attraction[],
+          matchedCity: matchedStop && matchedStop.city !== parsed.city ? matchedStop.city : undefined,
+        })
+      }
+    }
+
+    if (ti.toolName === 'search_restaurants') {
+      const parsed = parseSearchRestaurants(raw)
+      if (parsed.city) {
+        const matchedStop = findMatchingStop(batchStops, parsed.city)
+        batch.restaurantPatches.push({
+          city: parsed.city,
+          restaurants: parsed.restaurants as Attraction[],
+          matchedCity: matchedStop && matchedStop.city !== parsed.city ? matchedStop.city : undefined,
+        })
+      }
+    }
+
+    if (ti.toolName === 'build_booking_summary') {
+      const r = raw as Record<string, unknown>
+      if (r?.summary) batch.bookingSummary = r.summary as BookingSummary
     }
   }
 

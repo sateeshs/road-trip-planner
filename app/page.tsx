@@ -34,6 +34,7 @@ function TripLayout() {
     hotelsByCity,
     attractionsByCity,
     surroundingsByCity,
+    restaurantsByCity,
     isSurroundingsLoading,
     allHotels,
     allAttractions,
@@ -371,6 +372,7 @@ function TripLayout() {
         hotels={selectedStop ? (hotelsByCity[selectedStop.city] ?? []) : []}
         attractions={selectedStop ? (attractionsByCity[selectedStop.city] ?? []) : []}
         surroundings={selectedStop ? (surroundingsByCity[selectedStop.city] ?? []) : []}
+        restaurants={selectedStop ? (restaurantsByCity[selectedStop.city] ?? []) : []}
         isSurroundingsLoading={isSurroundingsLoading}
         isRemovable={selectedStop ? (() => { const idx = stops.findIndex(s => s.city === selectedStop.city); return stops.length > 2 && idx > 0 && idx < stops.length - 1 })() : false}
         onClose={() => setSelectedStop(null)}
