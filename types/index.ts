@@ -49,6 +49,7 @@ export interface Hotel {
   amenities?: string[]
   photoUrl?: string
   availableOffers?: HotelOffer[]
+  isCamping?: boolean    // true for camp_site / caravan_site fallback results
 }
 
 export interface HotelOffer {

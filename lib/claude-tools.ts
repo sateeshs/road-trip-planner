@@ -307,6 +307,86 @@ out center tags 20;`
   return results
 }
 
+// Campground amenity tags → human-readable labels
+const CAMP_AMENITIES: Array<[string, string, string]> = [
+  ['electric_hookup', 'yes', 'Electric Hookup'],
+  ['hookup', 'electric', 'Electric Hookup'],
+  ['power_supply', 'yes', 'Power Supply'],
+  ['water_hookup', 'yes', 'Water Hookup'],
+  ['sewage', 'yes', 'Sewer Hookup'],
+  ['shower', 'yes', 'Showers'],
+  ['toilets', 'yes', 'Restrooms'],
+  ['wifi', 'yes', 'Free WiFi'],
+  ['internet_access', 'wlan', 'Free WiFi'],
+  ['dogs_leash', 'yes', 'Dogs Welcome'],
+  ['dogs', 'yes', 'Dogs Welcome'],
+  ['fire_pit', 'yes', 'Fire Pits'],
+]
+
+async function osmCampgrounds(city: string, state: string): Promise<Hotel[]> {
+  const coords = await resolveCityCoords(city)
+  if (!coords) return []
+  const { lat, lng } = coords
+  const r = 25000  // wider radius (25 km) — campgrounds are often outside city centers
+
+  const ql = `[out:json][timeout:12];
+(
+  node["tourism"~"camp_site|caravan_site"](around:${r},${lat},${lng});
+  way["tourism"~"camp_site|caravan_site"](around:${r},${lat},${lng});
+);
+out center tags 15;`
+
+  const elements = await overpassQuery(ql)
+  const seen = new Set<string>()
+  const results: Hotel[] = []
+
+  for (const el of elements) {
+    const elLat = el.lat ?? el.center?.lat
+    const elLng = el.lon ?? el.center?.lon
+    const tags = el.tags ?? {}
+    const name = tags.name ?? tags['name:en']
+    if (!elLat || !elLng || !name || seen.has(name)) continue
+    seen.add(name)
+
+    const isCamping = true
+    const isRV = tags.tourism === 'caravan_site'
+    const hasElectric = tags.electric_hookup === 'yes' || tags.hookup === 'electric' || tags.power_supply === 'yes'
+
+    const amenities = CAMP_AMENITIES
+      .filter(([key, val]) => tags[key] === val)
+      .map(([,, label]) => label)
+      .filter((v, i, a) => a.indexOf(v) === i)  // dedupe
+
+    const basePrice = isRV ? 45 : hasElectric ? 40 : 30
+
+    results.push({
+      hotelId: `osm-camp-${el.type}-${el.id}`,
+      name,
+      address: osmAddress(tags, city),
+      coordinates: { lat: elLat, lng: elLng },
+      pricePerNight: basePrice,
+      currency: 'USD',
+      dealTag: hasElectric ? '⚡ Electric Hookup' : isRV ? '🚐 RV Sites' : undefined,
+      amenities,
+      isCamping,
+      availableOffers: [{
+        offerId: `osm-camp-offer-${el.id}`,
+        roomType: isRV ? 'RV / Full-Hookup Site' : hasElectric ? 'Electric Tent Site' : 'Tent Site',
+        bedType: 'Tent / RV',
+        price: basePrice,
+        currency: 'USD',
+        cancellationPolicy: 'Free cancellation',
+        breakfastIncluded: false,
+        bookingUrl: tags.website ?? tags['contact:website'] ?? `https://www.google.com/search?q=${encodeURIComponent(name + ' ' + city + ' ' + state + ' camping reservations')}`,
+      }],
+    })
+    if (results.length >= 6) break
+  }
+
+  // Prefer sites with electric hookups first
+  return results.sort((a) => (a.dealTag?.includes('Electric') ? -1 : 1))
+}
+
 export const agentTools = {
   /**
    * Called after Claude decides on the stop cities.
@@ -515,11 +595,28 @@ export const agentTools = {
       }
       // Fallback: OpenStreetMap hotels via Overpass (free, no key required)
       try {
-        const hotels = await osmHotels(city, city.split(',')[0], checkIn, checkOut)
+        const state = city.split(',')[1]?.trim() ?? city
+        const hotels = await osmHotels(city, state, checkIn, checkOut)
+        // When hotels are sparse (< 2), also fetch campgrounds as an alternative
+        if (hotels.length < 2) {
+          try {
+            const campgrounds = await osmCampgrounds(city, state)
+            return { hotels: [...hotels, ...campgrounds], city, checkIn, checkOut }
+          } catch {
+            // campground fetch failed — return whatever hotels we have
+          }
+        }
         return { hotels, city, checkIn, checkOut }
       } catch (err) {
         console.error('OSM hotels failed:', err)
-        return { hotels: [], city, checkIn, checkOut }
+        // Hotels completely failed — try campgrounds as last resort
+        try {
+          const state = city.split(',')[1]?.trim() ?? city
+          const campgrounds = await osmCampgrounds(city, state)
+          return { hotels: campgrounds, city, checkIn, checkOut }
+        } catch {
+          return { hotels: [], city, checkIn, checkOut }
+        }
       }
     },
   }),
@@ -748,6 +845,7 @@ ROUTE QUALITY RULES — always apply these when planning or evaluating a route:
 - **Seasonal conditions**: proactively flag known issues — mountain passes that close in winter (Going-to-the-Sun Road before late June), peak foliage timing (New England: mid-October), hurricane season (Gulf Coast: June–November), extreme desert heat (Arizona/Nevada: July–August). Suggest timing adjustments or alternates when relevant.
 - **Round trip detection**: if the user says "road trip", "loop", "circular", "exploring", or "scenic drive" without a clear destination — or if origin and destination are the same city — ask: "Sounds like a loop trip — want me to plan this as a round trip back to [origin]? I can optimize the full circuit to avoid backtracking."
 - **Budget awareness**: if the user mentions a budget, acknowledge it and factor it into hotel tier recommendations and number of stops. Don't over-plan a luxury itinerary for a budget trip.
+- **Camping fallback**: when search_hotels returns campgrounds (isCamping results), mention them enthusiastically — "No hotels nearby, but I found campgrounds with electric hookups!" Highlight electric hookup availability and whether reservations are needed.
 
 GENERATIVE UI — use render_ui to present data visually after tools have fetched it:
 - After suggest_route_stops + search_attractions + search_hotels + explore_surroundings complete: call render_ui with component='trip_stats', title='Your Trip', data containing stops, distance, and duration summary.
