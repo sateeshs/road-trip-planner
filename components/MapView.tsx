@@ -48,7 +48,7 @@ interface MapViewProps {
   onMapRightClick?: (lat: number, lng: number, x: number, y: number) => void
   confirmedReservations?: ConfirmedReservation[]
   proactivePOIs?: ProactivePOIs
-  highlightedCorridorStop?: CorridorStop | null
+  highlightedCorridorStops?: CorridorStop[]
 }
 
 export default function MapView(props: MapViewProps) {

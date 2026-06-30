@@ -359,12 +359,12 @@ interface LeafletMapProps {
   onMapRightClick?: (lat: number, lng: number, x: number, y: number) => void
   confirmedReservations?: ConfirmedReservation[]
   proactivePOIs?: ProactivePOIs
-  highlightedCorridorStop?: CorridorStop | null
+  highlightedCorridorStops?: CorridorStop[]
 }
 
 export default function LeafletMap({
   stops, attractions, surroundings, hotels, routeGeometry, selectedStop, onStopClick,
-  onMapRightClick, confirmedReservations = [], proactivePOIs, highlightedCorridorStop,
+  onMapRightClick, confirmedReservations = [], proactivePOIs, highlightedCorridorStops = [],
 }: LeafletMapProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [segmentCard, setSegmentCard] = useState<{ info: SegmentInfo; x: number; y: number } | null>(null)
@@ -670,11 +670,11 @@ export default function LeafletMap({
           />
         ))}
 
-        {/* ── Highlighted corridor stop (On Your Way preview pin) ── */}
-        {highlightedCorridorStop && (
+        {/* ── Highlighted corridor stops (On Your Way pins — all added/previewed) ── */}
+        {highlightedCorridorStops.map(cs => (
           <Marker
-            key={`corridor-highlight-${highlightedCorridorStop.id}`}
-            position={[highlightedCorridorStop.lat, highlightedCorridorStop.lng]}
+            key={`corridor-highlight-${cs.id}`}
+            position={[cs.lat, cs.lng]}
             icon={L.divIcon({
               className: '',
               iconAnchor: [20, 48],
@@ -692,7 +692,7 @@ export default function LeafletMap({
                     position:absolute;top:50%;left:50%;
                     transform:translate(-50%,-58%) rotate(0deg);
                     font-size:18px;line-height:1;
-                  ">${highlightedCorridorStop.emoji}</div>
+                  ">${cs.emoji}</div>
                   <div style="
                     position:absolute;bottom:-22px;left:50%;transform:translateX(-50%);
                     background:#d97706;color:white;
@@ -701,16 +701,16 @@ export default function LeafletMap({
                     white-space:nowrap;border:1.5px solid white;
                     box-shadow:0 1px 4px rgba(0,0,0,0.25);
                     max-width:100px;overflow:hidden;text-overflow:ellipsis;
-                  ">${highlightedCorridorStop.name}</div>
+                  ">${cs.name}</div>
                 </div>`,
             })}
             eventHandlers={{
-              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, highlightedCorridorStop.name, highlightedCorridorStop.category, `${highlightedCorridorStop.distanceMiles} mi off route`),
-              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, highlightedCorridorStop.name, highlightedCorridorStop.category, `${highlightedCorridorStop.distanceMiles} mi off route`),
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, cs.name, cs.category, `${cs.distanceMiles} mi off route`),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, cs.name, cs.category, `${cs.distanceMiles} mi off route`),
               mouseout: hideTooltip,
             }}
           />
-        )}
+        ))}
       </MapContainer>
 
       {/* ── Hover tooltip overlay (fixed-position div, ported from TREK TooltipOverlay) ── */}

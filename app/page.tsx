@@ -83,7 +83,7 @@ function TripLayout() {
 
   const [membersOpen, setMembersOpen] = useState(false)
   const [chatModalOpen, setChatModalOpen] = useState(false)
-  const [highlightedCorridorStop, setHighlightedCorridorStop] = useState<import('@/hooks/useCorridorStops').CorridorStop | null>(null)
+  const [highlightedCorridorStops, setHighlightedCorridorStops] = useState<import('@/hooks/useCorridorStops').CorridorStop[]>([])
 
   // Phase 7: corridor opportunistic stops
   const corridorStops = useCorridorStops(routeGeometry, stops)
@@ -119,7 +119,7 @@ function TripLayout() {
           selectedStop={selectedStop}
           confirmedReservations={confirmedReservations}
           proactivePOIs={proactivePois}
-          highlightedCorridorStop={highlightedCorridorStop}
+          highlightedCorridorStops={highlightedCorridorStops}
           onStopClick={stop => setSelectedStop(stop)}
           onMapRightClick={handleMapRightClick}
         />
@@ -184,9 +184,13 @@ function TripLayout() {
           stops={corridorStops}
           onAdd={handleAddCorridorStop}
           chatOpen={!chatCollapsed}
-          highlightedId={highlightedCorridorStop?.id ?? null}
+          highlightedIds={new Set(highlightedCorridorStops.map(s => s.id))}
           onHighlight={stop =>
-            setHighlightedCorridorStop(prev => prev?.id === stop.id ? null : stop)
+            setHighlightedCorridorStops(prev =>
+              prev.some(s => s.id === stop.id)
+                ? prev.filter(s => s.id !== stop.id)
+                : [...prev, stop]
+            )
           }
         />
       )}

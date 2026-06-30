@@ -12,13 +12,13 @@ interface CorridorStopsPanelProps {
   onAdd: (stop: CorridorStop) => void
   /** Whether the left chat panel is expanded — shifts corridor panel right to avoid overlap */
   chatOpen?: boolean
-  /** ID of the currently highlighted stop (shown as pin on map) */
-  highlightedId?: string | null
+  /** IDs of stops currently pinned on the map */
+  highlightedIds?: Set<string>
   /** Toggle highlight on/off for a stop */
   onHighlight?: (stop: CorridorStop) => void
 }
 
-export default function CorridorStopsPanel({ stops, onAdd, chatOpen = true, highlightedId, onHighlight }: CorridorStopsPanelProps) {
+export default function CorridorStopsPanel({ stops, onAdd, chatOpen = true, highlightedIds, onHighlight }: CorridorStopsPanelProps) {
   const [dismissed, setDismissed] = useState(false)
   const [added, setAdded] = useState<Set<string>>(new Set())
 
@@ -26,6 +26,7 @@ export default function CorridorStopsPanel({ stops, onAdd, chatOpen = true, high
 
   function handleAdd(stop: CorridorStop) {
     setAdded(prev => new Set(prev).add(stop.id))
+    onHighlight?.(stop)   // pin on map when adding
     onAdd(stop)
   }
 
@@ -56,7 +57,7 @@ export default function CorridorStopsPanel({ stops, onAdd, chatOpen = true, high
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
           {stops.map(stop => {
             const isAdded = added.has(stop.id)
-            const isHighlighted = highlightedId === stop.id
+            const isHighlighted = highlightedIds?.has(stop.id) ?? false
             return (
               <div
                 key={stop.id}
