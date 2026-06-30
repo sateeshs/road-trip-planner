@@ -18,11 +18,15 @@ const openrouter = createOpenAI({
   },
 })
 
-// openai/gpt-oss-120b:free — confirmed to support tool calls reliably.
-// openrouter/free is a pseudo-model that picks any available free model; some
-// don't support tool_use and silently return text, breaking attractions/hotels.
-// Override with OPENROUTER_MODEL env var.
-const MODEL = process.env.OPENROUTER_MODEL ?? 'openai/gpt-oss-120b:free'
+// Free models confirmed to support tool calls reliably, in fallback order.
+// When the primary model returns 429 (rate limited), the next is tried automatically.
+// Override the primary with OPENROUTER_MODEL env var.
+const FREE_MODEL_FALLBACKS = [
+  process.env.OPENROUTER_MODEL ?? 'google/gemini-2.5-flash:free',
+  'meta-llama/llama-4-maverick:free',
+  'openai/gpt-oss-120b:free',
+  'mistralai/mistral-small-3.1-24b-instruct:free',
+]
 
 // Max messages to send to the model — trim older ones to avoid context overflow.
 // Tool results can be 5–10 KB each; after 3–4 trip modifications the 131K context fills.
@@ -96,24 +100,84 @@ export async function POST(req: Request) {
     tools = agentTools
   }
 
-  const result = streamText({
-    model: openrouter(MODEL),
-    system: `${SYSTEM_PROMPT}${styleNote}\n\nToday's date is ${today}. Use this as the default trip start date when none is provided.`,
-    messages: trimmed,
-    tools,
-    // Step budget: 1 suggest_route_stops + 4 search_attractions + 4 search_hotels
-    // + 4 explore_surroundings = 13 steps for a 4-stop trip. 15 gives headroom without
-    // letting the model burn the 30s Edge budget on excessive tool calls.
-    maxSteps: 15,
-    onError: ({ error }) => {
-      console.error('[OpenRouter] streamText error:', error)
-    },
-    onFinish: async () => {
-      if (mcpClients.length > 0) {
-        await Promise.allSettled(mcpClients.map((c) => c.close()))
-      }
-    },
-  })
+  const systemPrompt = `${SYSTEM_PROMPT}${styleNote}\n\nToday's date is ${today}. Use this as the default trip start date when none is provided.`
 
-  return result.toDataStreamResponse()
+  // Try each model in fallback order — stops at first success.
+  // 429 (rate limited) and 503 (overloaded) trigger the next model.
+  for (let i = 0; i < FREE_MODEL_FALLBACKS.length; i++) {
+    const modelId = FREE_MODEL_FALLBACKS[i]
+    try {
+      const result = streamText({
+        model: openrouter(modelId),
+        system: systemPrompt,
+        messages: trimmed,
+        tools,
+        // Step budget: 1 suggest_route_stops + 4 search_attractions + 4 search_hotels
+        // + 4 explore_surroundings = 13 steps for a 4-stop trip. 15 gives headroom.
+        maxSteps: 15,
+        onError: ({ error }) => {
+          console.error(`[OpenRouter] streamText error (model=${modelId}):`, error)
+        },
+        onFinish: async () => {
+          if (mcpClients.length > 0) {
+            await Promise.allSettled(mcpClients.map((c) => c.close()))
+          }
+        },
+      })
+
+      // Consume the first chunk to detect immediate 429/503 before committing the stream.
+      // fullStream is an async iterable; peek at the first event then re-stream everything.
+      const reader = result.toDataStream().getReader()
+      const first = await reader.read()
+
+      // Check if the stream immediately errored (empty or error chunk)
+      if (first.done) {
+        // Empty stream — likely model error; try next
+        console.warn(`[OpenRouter] Empty stream from ${modelId}, trying next model`)
+        continue
+      }
+
+      // Stream started successfully — pipe remainder back to client
+      const stream = new ReadableStream({
+        start(controller) {
+          if (first.value) controller.enqueue(first.value)
+          function pump(): Promise<void> {
+            return reader.read().then(({ done, value }) => {
+              if (done) { controller.close(); return }
+              controller.enqueue(value)
+              return pump()
+            }).catch(err => controller.error(err))
+          }
+          return pump()
+        },
+        cancel() { reader.cancel() },
+      })
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'X-Model-Used': modelId,
+        },
+      })
+    } catch (err: unknown) {
+      const status = (err as { statusCode?: number })?.statusCode
+      const isRateLimit = status === 429 || status === 503
+      const isLast = i === FREE_MODEL_FALLBACKS.length - 1
+
+      console.warn(`[OpenRouter] model=${modelId} failed (status=${status}), ${isLast ? 'no more fallbacks' : 'trying next'}`)
+
+      if (!isRateLimit || isLast) {
+        return new Response(
+          JSON.stringify({ error: 'All models are currently unavailable. Please try again in a moment.' }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      // rate limited — continue to next model
+    }
+  }
+
+  return new Response(
+    JSON.stringify({ error: 'No available models. Please try again later.' }),
+    { status: 503, headers: { 'Content-Type': 'application/json' } },
+  )
 }
