@@ -197,13 +197,12 @@ export default function ChatPanel({
           <div ref={bottomRef} />
         </div>
 
-        {/* ── Trip Style Picker (shown only before first message) ── */}
-        {messages.length === 0 && (
-          <TripStylePicker
-            selectedStyles={tripStyles}
-            onToggle={onToggleTripStyle}
-          />
-        )}
+        {/* ── Trip Style Picker (always visible; disabled once trip is underway) ── */}
+        <TripStylePicker
+          selectedStyles={tripStyles}
+          onToggle={onToggleTripStyle}
+          disabled={messages.length > 0}
+        />
 
         {/* ── Input ── */}
         <div className="shrink-0 bg-white border-t border-gray-100 px-3 py-3">
