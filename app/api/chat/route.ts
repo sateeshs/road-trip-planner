@@ -3,8 +3,8 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { renderUiTool, SYSTEM_PROMPT } from '@/lib/claude-tools'
 
-export const runtime = 'edge'
-export const maxDuration = 30
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 // OpenRouter: unified API gateway for 200+ models including Claude
 // Uses the OpenAI-compatible endpoint with a custom base URL
