@@ -1,6 +1,7 @@
-import { streamText } from 'ai'
+import { streamText, experimental_createMCPClient } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
-import { agentTools, SYSTEM_PROMPT } from '@/lib/claude-tools'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { renderUiTool, SYSTEM_PROMPT } from '@/lib/claude-tools'
 
 export const runtime = 'edge'
 export const maxDuration = 30
@@ -26,6 +27,13 @@ const MODEL = process.env.OPENROUTER_MODEL ?? 'openai/gpt-oss-120b:free'
 // Max messages to send to the model — trim older ones to avoid context overflow.
 // Tool results can be 5–10 KB each; after 3–4 trip modifications the 131K context fills.
 const MAX_HISTORY_MESSAGES = 30
+
+// Use MCP Workers when all three env vars are set; fall back to inline tools otherwise.
+const USE_MCP = !!(
+  process.env.ROUTING_MCP_URL &&
+  process.env.PLACES_MCP_URL &&
+  process.env.HOTELS_MCP_URL
+)
 
 export async function POST(req: Request) {
   if (!process.env.OPENROUTER_API_KEY) {
@@ -53,11 +61,42 @@ export async function POST(req: Request) {
       ? `\n\nTrip style preferences selected by this user: ${tripStyles.join(', ')}. Tailor hotel tier, activity type, and dining recommendations accordingly.`
       : ''
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let tools: Record<string, any>
+
+  if (USE_MCP) {
+    // MCP mode — tools served from Cloudflare Workers via Streamable HTTP
+    const [routingClient, placesClient, hotelsClient] = await Promise.all([
+      experimental_createMCPClient({
+        transport: new StreamableHTTPClientTransport(new URL(process.env.ROUTING_MCP_URL!)),
+      }),
+      experimental_createMCPClient({
+        transport: new StreamableHTTPClientTransport(new URL(process.env.PLACES_MCP_URL!)),
+      }),
+      experimental_createMCPClient({
+        transport: new StreamableHTTPClientTransport(new URL(process.env.HOTELS_MCP_URL!)),
+      }),
+    ])
+
+    const [routingTools, placesTools, hotelTools] = await Promise.all([
+      routingClient.tools(),
+      placesClient.tools(),
+      hotelsClient.tools(),
+    ])
+
+    // render_ui is a client-side-only tool; not served by any Worker
+    tools = { ...routingTools, ...placesTools, ...hotelTools, render_ui: renderUiTool }
+  } else {
+    // Fallback — inline tools (works without MCP env vars)
+    const { agentTools } = await import('@/lib/claude-tools')
+    tools = agentTools
+  }
+
   const result = streamText({
     model: openrouter(MODEL),
     system: `${SYSTEM_PROMPT}${styleNote}\n\nToday's date is ${today}. Use this as the default trip start date when none is provided.`,
     messages: trimmed,
-    tools: agentTools,
+    tools,
     // Step budget: 1 suggest_route_stops + 4 search_attractions + 4 search_hotels
     // + 4 explore_surroundings = 13 steps for a 4-stop trip. 15 gives headroom without
     // letting the model burn the 30s Edge budget on excessive tool calls.

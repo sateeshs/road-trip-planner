@@ -706,6 +706,8 @@ out center 20;`
   }),
 }
 
+export const renderUiTool = agentTools.render_ui
+
 export const SYSTEM_PROMPT = `You are a friendly and knowledgeable US road trip planning assistant. You help families and groups plan amazing road trips across the United States.
 
 Your personality:

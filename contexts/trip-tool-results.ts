@@ -42,6 +42,20 @@ export interface ToolResultBatch {
   surroundingsCompleted: boolean
 }
 
+// ─── MCP result parser ───────────────────────────────────────────────────────
+
+/**
+ * Safely parses a tool result that may be a JSON string (MCP mode) or
+ * a plain object (inline mode). MCP tools serialize result content as
+ * `content[0].text`, which the AI SDK passes to the LLM as a JSON string.
+ */
+export function parseResult<T>(result: unknown): T {
+  if (typeof result === 'string') {
+    try { return JSON.parse(result) as T } catch { return result as unknown as T }
+  }
+  return result as T
+}
+
 // ─── City fuzzy matching ─────────────────────────────────────────────────────
 
 /**
@@ -92,7 +106,7 @@ export function extractToolResults(
     if (part.type !== 'tool-invocation') continue
     const ti = part.toolInvocation
     if (!ti || ti.state !== 'result') continue
-    const result = ti.result as Record<string, unknown>
+    const result = parseResult<Record<string, unknown>>(ti.result)
     if (ti.toolName === 'suggest_route_stops' && result?.stops) {
       batchStops = result.stops as RouteStop[]
     }
@@ -103,7 +117,7 @@ export function extractToolResults(
     if (part.type !== 'tool-invocation') continue
     const ti = part.toolInvocation
     if (!ti || ti.state !== 'result') continue
-    const result = ti.result as Record<string, unknown>
+    const result = parseResult<Record<string, unknown>>(ti.result)
 
     if (ti.toolName === 'suggest_route_stops') {
       if (result?.stops) batch.newStops = result.stops as RouteStop[]
