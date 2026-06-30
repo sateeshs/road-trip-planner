@@ -6,6 +6,8 @@ import type { BookingSummary } from '@/components/BookingReviewModal'
 import type { RouteStop, Hotel, Attraction, RouteGeometry, ConfirmedReservation, PlanActivity } from '@/types'
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
+import { useProactiveNPS } from '@/hooks/useProactiveNPS'
+import type { NpsMapMarker } from '@/hooks/useProactiveNPS'
 import { reverseGeocode } from '@/lib/route-utils'
 import { runNSGAII } from '@/lib/route-optimizer'
 import type { ParetoRoute } from '@/lib/route-optimizer'
@@ -61,6 +63,8 @@ export interface TripContextValue {
   messages: Message[]
   input: string
   isLoading: boolean
+  chatError: Error | null
+  retryChat: () => void
   handleInputChange: (e: React.ChangeEvent<HTMLInputElement> | React.ChangeEvent<HTMLTextAreaElement>) => void
   handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void
   setInput: (v: string) => void
@@ -76,6 +80,9 @@ export interface TripContextValue {
 
   // Proactive POIs (gas, food, restrooms, campgrounds)
   proactivePois: ProactivePOIs
+
+  // Proactive NPS map markers (deterministic, no LLM required)
+  npsMarkers: NpsMapMarker[]
 
   // Handlers
   handleExploreSurroundings: (city: string, state: string, categories: SurroundingsCategory[]) => Promise<void>
@@ -178,11 +185,51 @@ export function TripProvider({ children }: { children: ReactNode }) {
   // ── Proactive POIs ──
   const proactivePois = useProactivePlaces(stops)
 
+  // ── Proactive NPS markers ──
+  const npsMarkers = useProactiveNPS(stops)
+
   // ── Chat ──
-  const { messages, input, handleInputChange, handleSubmit, isLoading, append, setInput } = useChat({
+  const { messages, input, handleInputChange, handleSubmit: _handleSubmit, isLoading, append, setInput, reload, error: chatError } = useChat({
     api: '/api/chat',
-    body: { tripStyles },
   })
+
+  // Wrap handleSubmit to always pass current tripStyles at call time.
+  // Relying on useChat's `body` option is unreliable — the SDK captures it
+  // at mount and may not re-read it when state changes before the first submit.
+  const handleSubmit = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      _handleSubmit(e, { body: { tripStyles } })
+    },
+    [_handleSubmit, tripStyles],
+  )
+
+  // ── Auto-retry on LLM error (once, after 3 s) ──
+  // reload() re-sends the last user message without adding a duplicate to the chat.
+  const retryCountRef = useRef(0)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (chatError && !isLoading && retryCountRef.current === 0) {
+      retryCountRef.current = 1
+      retryTimerRef.current = setTimeout(() => {
+        reload({ body: { tripStyles } })
+      }, 3000)
+    }
+    if (!chatError) {
+      retryCountRef.current = 0
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    }
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatError, isLoading])
+
+  // Manual retry/resume — called by the "Resume" button in the chat UI.
+  const retryChat = useCallback(() => {
+    retryCountRef.current = 0
+    reload({ body: { tripStyles } })
+  }, [reload, tripStyles])
 
   // ── Keep a ref to latest stops so we can read them inside the effect
   //    without adding `stops` to the dependency array (which would cause
@@ -758,9 +805,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
     mapMenu,
     setMapMenu,
     proactivePois,
+    npsMarkers,
     messages,
     input,
     isLoading,
+    chatError: chatError ?? null,
+    retryChat,
     handleInputChange,
     handleSubmit,
     setInput,
