@@ -674,6 +674,126 @@ export const agentTools = {
     },
   }),
 
+  search_national_parks: tool({
+    description:
+      'Fetch official NPS data for a national park, lakeshore, monument, or recreation area near a route stop. ' +
+      'Returns park info, entrance fees, campgrounds (with electric hookup details and recreation.gov links), ' +
+      'live alerts/closures, visitor center hours, and current activities. ' +
+      'Call when any stop is near or named after a national park, national lakeshore, national forest, or monument.',
+    parameters: z.object({
+      parkCode: z.string().describe(
+        'NPS 4-letter park code, e.g. "piro" for Pictured Rocks, "yell" for Yellowstone, ' +
+        '"grca" for Grand Canyon, "grsm" for Great Smoky Mountains, "zion" for Zion, ' +
+        '"arch" for Arches, "romo" for Rocky Mountain, "olym" for Olympic, "glac" for Glacier. ' +
+        'If unsure, use the first 4 letters of the park name.',
+      ),
+      includeAlerts: z.boolean().default(true).describe('Fetch live alerts and closures'),
+      includeCampgrounds: z.boolean().default(true).describe('Fetch campground details with fees and hookups'),
+    }),
+    execute: async ({ parkCode, includeAlerts, includeCampgrounds }) => {
+      const NPS_KEY = process.env.NPS_API_KEY ?? 'DEMO_KEY'
+      const base = 'https://developer.nps.gov/api/v1'
+      const headers = { 'X-Api-Key': NPS_KEY }
+
+      async function npsGet(endpoint: string) {
+        const res = await fetch(`${base}${endpoint}`, { headers, signal: AbortSignal.timeout(8000) })
+        if (!res.ok) throw new Error(`NPS API ${endpoint} returned ${res.status}`)
+        return res.json()
+      }
+
+      try {
+        // Always fetch park info
+        const parkData = await npsGet(`/parks?parkCode=${parkCode}&fields=entranceFees,operatingHours,activities,images,weatherInfo`)
+        const park = parkData.data?.[0]
+        if (!park) return { error: `Park code "${parkCode}" not found in NPS database.` }
+
+        // Parallel fetch alerts + campgrounds if requested
+        const [alertsData, campData] = await Promise.all([
+          includeAlerts ? npsGet(`/alerts?parkCode=${parkCode}&limit=10`) : Promise.resolve(null),
+          includeCampgrounds ? npsGet(`/campgrounds?parkCode=${parkCode}&limit=25`) : Promise.resolve(null),
+        ])
+
+        // Shape park info
+        const info = {
+          name: park.fullName,
+          description: park.description,
+          url: park.url,
+          coordinates: { lat: parseFloat(park.latitude), lng: parseFloat(park.longitude) },
+          state: park.states,
+          phone: park.contacts?.phoneNumbers?.[0]?.phoneNumber,
+          email: park.contacts?.emailAddresses?.[0]?.emailAddress,
+          weatherInfo: park.weatherInfo,
+          activities: (park.activities as Array<{ name: string }> | undefined)?.map(a => a.name).slice(0, 20) ?? [],
+          entranceFees: (park.entranceFees as Array<{ cost: string; description: string; title: string }> | undefined)?.map(f => ({
+            title: f.title,
+            cost: `$${parseFloat(f.cost).toFixed(0)}`,
+            description: f.description,
+          })) ?? [],
+          images: (park.images as Array<{ url: string; title: string; caption: string }> | undefined)?.slice(0, 3).map(img => ({
+            url: img.url,
+            title: img.title,
+            caption: img.caption,
+          })) ?? [],
+        }
+
+        // Shape alerts
+        const alerts = (alertsData?.data as Array<{ title: string; description: string; category: string; url: string }> | undefined)?.map(a => ({
+          title: a.title,
+          description: a.description,
+          category: a.category,
+          url: a.url,
+        })) ?? []
+
+        // Shape campgrounds
+        const campgrounds = (campData?.data as Array<{
+          name: string
+          description: string
+          directionsInfo: string
+          weatherOverview: string
+          latLng: string
+          campsites: { totalSites: string; tentOnly: string; electricalHookups: string; rvOnly: string; group: string }
+          amenities: { toilets: string; potableWater: string[]; showers: string[]; internetConnectivity: string; trashRecyclingCollection: string }
+          fees: Array<{ cost: string; description: string; title: string }>
+          reservationInfo: string
+          reservationUrl: string
+          accessibility: { wheelchairAccess: string; rvInfo: string }
+        }> | undefined)?.map(c => {
+          const [lat, lng] = (c.latLng ?? '').split(',').map(parseFloat)
+          const hasElectric = parseInt(c.campsites?.electricalHookups ?? '0') > 0
+          return {
+            name: c.name,
+            description: c.description?.slice(0, 200),
+            coordinates: lat && lng ? { lat, lng } : undefined,
+            sites: {
+              total: parseInt(c.campsites?.totalSites ?? '0'),
+              tentOnly: parseInt(c.campsites?.tentOnly ?? '0'),
+              electricHookups: parseInt(c.campsites?.electricalHookups ?? '0'),
+              rvSites: parseInt(c.campsites?.rvOnly ?? '0'),
+            },
+            hasElectricHookup: hasElectric,
+            amenities: {
+              toilets: c.amenities?.toilets,
+              potableWater: c.amenities?.potableWater?.[0],
+              showers: c.amenities?.showers?.[0],
+              wifi: c.amenities?.internetConnectivity,
+              trash: c.amenities?.trashRecyclingCollection,
+            },
+            fees: (c.fees ?? []).map(f => ({ title: f.title, cost: `$${parseFloat(f.cost).toFixed(0)}` })),
+            reservationInfo: c.reservationInfo?.slice(0, 200),
+            reservationUrl: c.reservationUrl,
+            wheelchairAccess: c.accessibility?.wheelchairAccess,
+            rvInfo: c.accessibility?.rvInfo,
+          }
+        }) ?? []
+
+        return { park: info, alerts, campgrounds, parkCode }
+      } catch (err) {
+        console.error('NPS API failed:', err)
+        return { error: `Could not fetch NPS data for park "${parkCode}". Try a different park code.` }
+      }
+    },
+  }),
+
   check_hotel_availability: tool({
     description: 'Check detailed availability and room options for a specific hotel.',
     parameters: z.object({
@@ -820,6 +940,7 @@ TOOL CALL ORDER — always follow this sequence exactly, never skip a step:
 4. Call **search_attractions** for every stop using the canonical city name from step 3.
 5. Call **search_hotels** for every stop using the canonical city name from step 3.
 6. Call **explore_surroundings** for EVERY intermediate stop and the destination — this is mandatory, not optional. Pick activities by geography:
+6b. Call **search_national_parks** if any stop is near or IS a national park, lakeshore, monument, seashore, or recreation area. Use the 4-letter NPS park code. Common codes: piro=Pictured Rocks, yell=Yellowstone, grca=Grand Canyon, grsm=Great Smoky Mountains, zion=Zion, arch=Arches, romo=Rocky Mountain, olym=Olympic, glac=Glacier, yose=Yosemite, acad=Acadia, shen=Shenandoah, badl=Badlands, cuva=Cuyahoga Valley, indu=Indiana Dunes, isle=Isle Royale, slbe=Sleeping Bear Dunes, voya=Voyageurs, apis=Apostle Islands.
    - Great Lakes / Lake Superior / rivers / canals / harbors → cruise, boat_tour, kayaking, fishing, boating, swimming
    - Coastal/bay cities → cruise, boat_tour, kayaking, fishing, swimming
    - National parks / forests / lakeshore → hiking, kayaking, camping, scenic_views, waterfalls, boat_tour
@@ -846,6 +967,7 @@ ROUTE QUALITY RULES — always apply these when planning or evaluating a route:
 - **Round trip detection**: if the user says "road trip", "loop", "circular", "exploring", or "scenic drive" without a clear destination — or if origin and destination are the same city — ask: "Sounds like a loop trip — want me to plan this as a round trip back to [origin]? I can optimize the full circuit to avoid backtracking."
 - **Budget awareness**: if the user mentions a budget, acknowledge it and factor it into hotel tier recommendations and number of stops. Don't over-plan a luxury itinerary for a budget trip.
 - **Camping fallback**: when search_hotels returns campgrounds (isCamping results), mention them enthusiastically — "No hotels nearby, but I found campgrounds with electric hookups!" Highlight electric hookup availability and whether reservations are needed.
+- **NPS data**: when search_national_parks returns alerts, always mention active closures upfront ("⚠️ Miners Castle road is currently closed"). Highlight campgrounds with electric hookups and link to their reservationUrl (recreation.gov). Present entrance fees clearly. If the park has >20 activities, highlight the top 5 most relevant to the user's trip style.
 
 GENERATIVE UI — use render_ui to present data visually after tools have fetched it:
 - After suggest_route_stops + search_attractions + search_hotels + explore_surroundings complete: call render_ui with component='trip_stats', title='Your Trip', data containing stops, distance, and duration summary.
