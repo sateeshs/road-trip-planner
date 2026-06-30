@@ -34,6 +34,7 @@ function TripLayout() {
     hotelsByCity,
     attractionsByCity,
     surroundingsByCity,
+    restaurantsByCity,
     isSurroundingsLoading,
     allHotels,
     allAttractions,
@@ -50,9 +51,12 @@ function TripLayout() {
     mapMenu,
     setMapMenu,
     proactivePois,
+    npsMarkers,
     messages,
     input,
     isLoading,
+    chatError,
+    retryChat,
     handleInputChange,
     handleSubmit,
     setInput,
@@ -84,6 +88,14 @@ function TripLayout() {
   const [membersOpen, setMembersOpen] = useState(false)
   const [chatModalOpen, setChatModalOpen] = useState(false)
   const [highlightedCorridorStops, setHighlightedCorridorStops] = useState<import('@/hooks/useCorridorStops').CorridorStop[]>([])
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set())
+
+  const toggleLayer = (layer: string) => setHiddenLayers(prev => {
+    const next = new Set(prev)
+    if (next.has(layer)) next.delete(layer)
+    else next.add(layer)
+    return next
+  })
 
   // Phase 7: corridor opportunistic stops
   const corridorStops = useCorridorStops(routeGeometry, stops)
@@ -119,26 +131,140 @@ function TripLayout() {
           selectedStop={selectedStop}
           confirmedReservations={confirmedReservations}
           proactivePOIs={proactivePois}
+          npsMarkers={npsMarkers}
           highlightedCorridorStops={highlightedCorridorStops}
+          hiddenLayers={hiddenLayers}
           onStopClick={stop => setSelectedStop(stop)}
           onMapRightClick={handleMapRightClick}
         />
       </div>
 
-      {/* Map legend (bottom-right, above zoom controls) */}
+      {/* Map legend (bottom-right, above zoom controls) — click items to toggle layers */}
       {(allAttractions.length > 0 || allHotels.length > 0 || allSurroundings.length > 0 || confirmedReservations.length > 0 ||
         proactivePois.gasStations.length > 0 || proactivePois.restaurants.length > 0 || proactivePois.attractions.length > 0 ||
-        proactivePois.restrooms.length > 0 || proactivePois.campgrounds.length > 0) && (
-        <div className="absolute bottom-52 right-4 z-[1000] bg-white/90 backdrop-blur-md rounded-xl px-3 py-2 shadow-lg border border-white/50 text-xs space-y-1">
-          {confirmedReservations.length > 0 && <div className="flex items-center gap-1.5"><span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px]">✓</span> Booked</div>}
-          {allHotels.length > 0 && <div className="flex items-center gap-1.5"><span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px]">H</span> Hotels</div>}
-          {allAttractions.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 border-2 border-amber-600 inline-block" /> Attractions</div>}
-          {allSurroundings.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-teal-400 border-2 border-teal-600 inline-block" /> Outdoor</div>}
-          {proactivePois.gasStations.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-gray-300 border border-gray-500 inline-block" /> Gas</div>}
-          {proactivePois.restaurants.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-orange-200 border border-orange-600 inline-block" /> Food</div>}
-          {proactivePois.attractions.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-violet-200 border border-violet-600 inline-block" /> POIs</div>}
-          {proactivePois.restrooms.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-sky-200 border border-sky-600 inline-block" /> Restrooms</div>}
-          {proactivePois.campgrounds.length > 0 && <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-200 border border-green-700 inline-block" /> Camping</div>}
+        proactivePois.restrooms.length > 0 || proactivePois.campgrounds.length > 0 || proactivePois.tollBooths.length > 0 ||
+        npsMarkers.length > 0) && (
+        <div className="absolute bottom-52 right-4 z-[1000] bg-white/90 backdrop-blur-md rounded-xl px-3 py-2 shadow-lg border border-white/50 text-xs space-y-0.5">
+          {confirmedReservations.length > 0 && (
+            <button
+              onClick={() => toggleLayer('booked')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('booked') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px] shrink-0">✓</span>
+              <span className={hiddenLayers.has('booked') ? 'line-through text-gray-400' : ''}>Booked</span>
+            </button>
+          )}
+          {allHotels.length > 0 && (
+            <button
+              onClick={() => toggleLayer('hotels')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('hotels') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-4 h-4 rounded bg-green-600 flex items-center justify-center text-white font-bold text-[9px] shrink-0">H</span>
+              <span className={hiddenLayers.has('hotels') ? 'line-through text-gray-400' : ''}>Hotels</span>
+            </button>
+          )}
+          {allAttractions.length > 0 && (
+            <button
+              onClick={() => toggleLayer('attractions')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('attractions') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-amber-400 border-2 border-amber-600 inline-block shrink-0" />
+              <span className={hiddenLayers.has('attractions') ? 'line-through text-gray-400' : ''}>Attractions</span>
+            </button>
+          )}
+          {allSurroundings.length > 0 && (
+            <button
+              onClick={() => toggleLayer('outdoor')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('outdoor') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-teal-400 border-2 border-teal-600 inline-block shrink-0" />
+              <span className={hiddenLayers.has('outdoor') ? 'line-through text-gray-400' : ''}>Outdoor</span>
+            </button>
+          )}
+          {proactivePois.gasStations.length > 0 && (
+            <button
+              onClick={() => toggleLayer('gas')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('gas') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-gray-300 border border-gray-500 inline-block shrink-0" />
+              <span className={hiddenLayers.has('gas') ? 'line-through text-gray-400' : ''}>Gas</span>
+            </button>
+          )}
+          {proactivePois.restaurants.length > 0 && (
+            <button
+              onClick={() => toggleLayer('food')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('food') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-orange-200 border border-orange-600 inline-block shrink-0" />
+              <span className={hiddenLayers.has('food') ? 'line-through text-gray-400' : ''}>Food</span>
+            </button>
+          )}
+          {proactivePois.attractions.length > 0 && (
+            <button
+              onClick={() => toggleLayer('pois')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('pois') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-violet-200 border border-violet-600 inline-block shrink-0" />
+              <span className={hiddenLayers.has('pois') ? 'line-through text-gray-400' : ''}>POIs</span>
+            </button>
+          )}
+          {proactivePois.restrooms.length > 0 && (
+            <button
+              onClick={() => toggleLayer('restrooms')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('restrooms') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-sky-200 border border-sky-600 inline-block shrink-0" />
+              <span className={hiddenLayers.has('restrooms') ? 'line-through text-gray-400' : ''}>Restrooms</span>
+            </button>
+          )}
+          {proactivePois.campgrounds.length > 0 && (
+            <button
+              onClick={() => toggleLayer('camping')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('camping') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-green-200 border border-green-700 inline-block shrink-0" />
+              <span className={hiddenLayers.has('camping') ? 'line-through text-gray-400' : ''}>Camping</span>
+            </button>
+          )}
+          {proactivePois.tollBooths.length > 0 && (
+            <button
+              onClick={() => toggleLayer('tolls')}
+              title="Click to hide/show"
+              className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('tolls') ? 'opacity-40' : ''}`}
+            >
+              <span className="w-3 h-3 rounded-full bg-red-200 border border-red-600 inline-block shrink-0" />
+              <span className={hiddenLayers.has('tolls') ? 'line-through text-gray-400' : ''}>Toll Gates</span>
+            </button>
+          )}
+          {npsMarkers.length > 0 && (
+            <>
+              <button
+                onClick={() => toggleLayer('nps')}
+                title="Click to hide/show"
+                className={`flex items-center gap-1.5 w-full text-left cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 py-0.5 transition-opacity ${hiddenLayers.has('nps') ? 'opacity-40' : ''}`}
+              >
+                <span className="w-3 h-3 rounded-full bg-green-600 border border-green-800 inline-block shrink-0" />
+                <span className={hiddenLayers.has('nps') ? 'line-through text-gray-400' : 'font-semibold'}>NPS Parks</span>
+              </button>
+              {!hiddenLayers.has('nps') && (
+                <div className="pl-4 space-y-0.5 text-[10px] text-gray-500">
+                  <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-600 inline-block" /> Campground</div>
+                  <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-600 inline-block" /> Trailhead</div>
+                  <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-600 inline-block" /> Overlook</div>
+                  <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-700 inline-block" /> Visitor Center</div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -147,6 +273,8 @@ function TripLayout() {
         messages={messages}
         input={input}
         isLoading={isLoading}
+        chatError={chatError}
+        onRetry={retryChat}
         collapsed={chatCollapsed}
         onToggle={() => setChatCollapsed(c => !c)}
         onInputChange={handleInputChange}
@@ -244,6 +372,7 @@ function TripLayout() {
         hotels={selectedStop ? (hotelsByCity[selectedStop.city] ?? []) : []}
         attractions={selectedStop ? (attractionsByCity[selectedStop.city] ?? []) : []}
         surroundings={selectedStop ? (surroundingsByCity[selectedStop.city] ?? []) : []}
+        restaurants={selectedStop ? (restaurantsByCity[selectedStop.city] ?? []) : []}
         isSurroundingsLoading={isSurroundingsLoading}
         isRemovable={selectedStop ? (() => { const idx = stops.findIndex(s => s.city === selectedStop.city); return stops.length > 2 && idx > 0 && idx < stops.length - 1 })() : false}
         onClose={() => setSelectedStop(null)}

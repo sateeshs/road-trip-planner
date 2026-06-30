@@ -58,7 +58,7 @@ function ActivityGroup({ label, items }: { label: string; items: Attraction[] })
 const COLLAPSE_THRESHOLD = 8
 
 export default function SurroundingsCard({ result }: Props) {
-  const { surroundings, city } = result
+  const { surroundings = [], city } = result
   const [expanded, setExpanded] = useState(false)
 
   const displayed = expanded ? surroundings : surroundings.slice(0, COLLAPSE_THRESHOLD)

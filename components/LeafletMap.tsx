@@ -6,6 +6,7 @@ import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
 import type { RouteStop, Attraction, Hotel, RouteGeometry, ConfirmedReservation } from '@/types'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
+import type { NpsMapMarker } from '@/hooks/useProactiveNPS'
 import type { CorridorStop } from '@/hooks/useCorridorStops'
 import MapControlsPill from './MapControlsPill'
 
@@ -346,6 +347,27 @@ interface TooltipState {
   extra?: string
 }
 
+// ─── MapClickHandler: dismiss NPS popup when clicking the map background ─────
+
+function MapClickHandler({ onMapClick }: { onMapClick: () => void }) {
+  useMapEvents({ click: onMapClick })
+  return null
+}
+
+// ─── NPS fcat emoji helper ────────────────────────────────────────────────────
+
+function fcatEmoji(fcat: string): string {
+  if (fcat === 'Campground' || fcat === 'Campsite') return '🏕️'
+  if (fcat === 'Trailhead') return '🥾'
+  if (fcat === 'Overlook') return '🔭'
+  if (fcat === 'Visitor Center' || fcat === 'Ranger Station' || fcat === 'Entrance Station') return '🏛️'
+  if (fcat === 'Boat Launch' || fcat === 'Canoe Access') return '🚣'
+  if (fcat === 'Lodge') return '🏠'
+  if (fcat === 'Swim') return '🏊'
+  if (fcat === 'Picnic Area') return '🧺'
+  return '📍'
+}
+
 // ─── Main LeafletMap component ─────────────────────────────────────────────
 
 interface LeafletMapProps {
@@ -359,15 +381,20 @@ interface LeafletMapProps {
   onMapRightClick?: (lat: number, lng: number, x: number, y: number) => void
   confirmedReservations?: ConfirmedReservation[]
   proactivePOIs?: ProactivePOIs
+  npsMarkers?: NpsMapMarker[]
   highlightedCorridorStops?: CorridorStop[]
+  hiddenLayers?: Set<string>
 }
 
 export default function LeafletMap({
   stops, attractions, surroundings, hotels, routeGeometry, selectedStop, onStopClick,
-  onMapRightClick, confirmedReservations = [], proactivePOIs, highlightedCorridorStops = [],
+  onMapRightClick, confirmedReservations = [], proactivePOIs, npsMarkers = [], highlightedCorridorStops = [],
+  hiddenLayers = new Set(),
 }: LeafletMapProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [segmentCard, setSegmentCard] = useState<{ info: SegmentInfo; x: number; y: number } | null>(null)
+  const [selectedNpsMarker, setSelectedNpsMarker] = useState<NpsMapMarker | null>(null)
+  const [npsPopupPos, setNpsPopupPos] = useState<{ x: number; y: number } | null>(null)
   const isTouchDevice = typeof window !== 'undefined' && navigator.maxTouchPoints > 0
 
   const showTooltip = useCallback((x: number, y: number, name: string, sub?: string, extra?: string) => {
@@ -444,6 +471,7 @@ export default function LeafletMap({
         <BoundsUpdater stops={stops} routeGeometry={routeGeometry} />
         <MapControlsPill />
         {onMapRightClick && <MapContextMenuHandler onContextMenu={onMapRightClick} />}
+        <MapClickHandler onMapClick={() => { setSelectedNpsMarker(null); setNpsPopupPos(null); setSegmentCard(null) }} />
 
         {/* ── Route geometry ── */}
         {routeGeometry && routeGeometry.length > 1 && (
@@ -512,7 +540,7 @@ export default function LeafletMap({
           animate={false}
           iconCreateFunction={clusterIconCreate}
         >
-          {hotels.filter(h => h.coordinates.lat !== 0).map(h => (
+          {!hiddenLayers.has('hotels') && hotels.filter(h => h.coordinates.lat !== 0).map(h => (
             <Marker
               key={h.hotelId}
               position={[h.coordinates.lat, h.coordinates.lng]}
@@ -535,7 +563,7 @@ export default function LeafletMap({
         </MarkerClusterGroup>
 
         {/* ── Confirmed reservation markers — shown above hotels, ported from TREK confirmed status ── */}
-        {confirmedReservations.map(res => (
+        {!hiddenLayers.has('booked') && confirmedReservations.map(res => (
           <Marker
             key={`res-${res.id}`}
             position={[res.stopCoordinates.lat, res.stopCoordinates.lng]}
@@ -558,7 +586,7 @@ export default function LeafletMap({
         ))}
 
         {/* ── Attraction markers (amber circles) ── */}
-        {attractions.map(a => (
+        {!hiddenLayers.has('attractions') && attractions.map(a => (
           <CircleMarker
             key={a.id}
             center={[a.coordinates.lat, a.coordinates.lng]}
@@ -581,7 +609,7 @@ export default function LeafletMap({
         ))}
 
         {/* ── Surroundings markers (teal) ── */}
-        {surroundings.map(s => (
+        {!hiddenLayers.has('outdoor') && surroundings.map(s => (
           <CircleMarker
             key={`surr-${s.id}`}
             center={[s.coordinates.lat, s.coordinates.lng]}
@@ -604,7 +632,7 @@ export default function LeafletMap({
         ))}
 
         {/* ── Proactive POIs from Overpass (gas stations, restaurants, attractions) ── */}
-        {proactivePOIs?.gasStations.map(p => (
+        {!hiddenLayers.has('gas') && proactivePOIs?.gasStations.map(p => (
           <CircleMarker
             key={p.id}
             center={[p.coordinates.lat, p.coordinates.lng]}
@@ -617,7 +645,7 @@ export default function LeafletMap({
             }}
           />
         ))}
-        {proactivePOIs?.restaurants.map(p => (
+        {!hiddenLayers.has('food') && proactivePOIs?.restaurants.map(p => (
           <CircleMarker
             key={p.id}
             center={[p.coordinates.lat, p.coordinates.lng]}
@@ -630,7 +658,7 @@ export default function LeafletMap({
             }}
           />
         ))}
-        {proactivePOIs?.attractions.map(p => (
+        {!hiddenLayers.has('pois') && proactivePOIs?.attractions.map(p => (
           <CircleMarker
             key={p.id}
             center={[p.coordinates.lat, p.coordinates.lng]}
@@ -643,7 +671,7 @@ export default function LeafletMap({
             }}
           />
         ))}
-        {proactivePOIs?.restrooms.map(p => (
+        {!hiddenLayers.has('restrooms') && proactivePOIs?.restrooms.map(p => (
           <CircleMarker
             key={p.id}
             center={[p.coordinates.lat, p.coordinates.lng]}
@@ -656,7 +684,7 @@ export default function LeafletMap({
             }}
           />
         ))}
-        {proactivePOIs?.campgrounds.map(p => (
+        {!hiddenLayers.has('camping') && proactivePOIs?.campgrounds.map(p => (
           <CircleMarker
             key={p.id}
             center={[p.coordinates.lat, p.coordinates.lng]}
@@ -669,6 +697,63 @@ export default function LeafletMap({
             }}
           />
         ))}
+        {!hiddenLayers.has('tolls') && proactivePOIs?.tollBooths.map(p => (
+          <CircleMarker
+            key={p.id}
+            center={[p.coordinates.lat, p.coordinates.lng]}
+            radius={6}
+            pathOptions={{ color: '#dc2626', fillColor: '#fca5a5', fillOpacity: 0.9, weight: 2 }}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Toll Gate', '⚠️ Toll Booth'),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Toll Gate', '⚠️ Toll Booth'),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
+
+        {/* ── NPS map markers (deterministic — no LLM required) ── */}
+        {!hiddenLayers.has('nps') && npsMarkers.map(m => {
+          const color = (() => {
+            const f = m.fcat
+            if (f === 'Campground' || f === 'Campsite') return { stroke: '#15803d', fill: '#16a34a' }
+            if (f === 'Trailhead') return { stroke: '#5b21b6', fill: '#7c3aed' }
+            if (f === 'Overlook') return { stroke: '#0e7490', fill: '#0891b2' }
+            if (f === 'Visitor Center' || f === 'Ranger Station' || f === 'Entrance Station') return { stroke: '#92400e', fill: '#b45309' }
+            return { stroke: '#4b5563', fill: '#6b7280' }
+          })()
+          const isSelected = selectedNpsMarker?.id === m.id
+          return (
+            <CircleMarker
+              key={m.id}
+              center={[m.coordinates.lat, m.coordinates.lng]}
+              radius={isSelected ? 10 : 7}
+              pathOptions={{
+                color: isSelected ? '#1d4ed8' : color.stroke,
+                fillColor: isSelected ? '#3b82f6' : color.fill,
+                fillOpacity: 0.9,
+                weight: isSelected ? 2.5 : 1.5,
+              }}
+              eventHandlers={{
+                mouseover: (e: L.LeafletMouseEvent) =>
+                  showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, m.name, m.fcat),
+                mousemove: (e: L.LeafletMouseEvent) =>
+                  showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, m.name, m.fcat),
+                mouseout: hideTooltip,
+                click: (e: L.LeafletMouseEvent) => {
+                  L.DomEvent.stopPropagation(e)
+                  const cx = e.originalEvent.clientX
+                  const cy = e.originalEvent.clientY
+                  setSelectedNpsMarker(prev => {
+                    if (prev?.id === m.id) { setNpsPopupPos(null); return null }
+                    setNpsPopupPos({ x: cx, y: cy })
+                    return m
+                  })
+                  hideTooltip()
+                },
+              }}
+            />
+          )
+        })}
 
         {/* ── Highlighted corridor stops (On Your Way pins — all added/previewed) ── */}
         {highlightedCorridorStops.map(cs => (
@@ -812,6 +897,106 @@ export default function LeafletMap({
             </div>
           )}
           <div style={{ fontSize: 10, color: '#d1d5db', marginTop: 6, textAlign: 'right' }}>click to dismiss</div>
+        </div>
+      )}
+
+      {/* ── NPS place info panel (near click position, appears on NPS marker click) ── */}
+      {selectedNpsMarker && npsPopupPos && (
+        <div
+          style={{
+            position: 'fixed',
+            left: Math.min(npsPopupPos.x + 14, window.innerWidth - 340),
+            top: Math.max(npsPopupPos.y - 120, 10),
+            zIndex: 2000,
+            background: 'white',
+            borderRadius: 16,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+            padding: '14px 16px',
+            maxWidth: 320,
+            minWidth: 240,
+          }}
+        >
+          {/* Close button */}
+          <button
+            onClick={() => setSelectedNpsMarker(null)}
+            style={{
+              position: 'absolute', top: 10, right: 12,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 18, color: '#9ca3af', lineHeight: 1,
+            }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+
+          {/* fcat badge */}
+          <div style={{ marginBottom: 6 }}>
+            <span style={{
+              background: '#f0fdf4', color: '#15803d',
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+              padding: '2px 7px', borderRadius: 99,
+              border: '1px solid #bbf7d0',
+              display: 'inline-block',
+            }}>
+              {selectedNpsMarker.fcat}
+            </span>
+          </div>
+
+          {/* Name */}
+          <div style={{ fontWeight: 800, fontSize: 14, color: '#111827', lineHeight: 1.35, paddingRight: 20, marginBottom: 2 }}>
+            {fcatEmoji(selectedNpsMarker.fcat)} {selectedNpsMarker.name}
+          </div>
+
+          {/* Park name sub-header */}
+          {selectedNpsMarker.parkName && (
+            <div style={{ fontSize: 11.5, color: '#2563eb', fontWeight: 600, marginBottom: 8 }}>
+              {selectedNpsMarker.parkName}
+            </div>
+          )}
+
+          {/* Description */}
+          {selectedNpsMarker.description && (
+            <div style={{ fontSize: 11.5, color: '#4b5563', lineHeight: 1.5, marginBottom: 10 }}>
+              {selectedNpsMarker.description}
+            </div>
+          )}
+
+          {/* Action links */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {selectedNpsMarker.npsUrl && (
+              <a
+                href={selectedNpsMarker.npsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'block', textAlign: 'center',
+                  background: '#1d4ed8', color: 'white',
+                  fontSize: 12, fontWeight: 700,
+                  padding: '7px 12px', borderRadius: 8,
+                  textDecoration: 'none',
+                }}
+              >
+                Visit NPS Website →
+              </a>
+            )}
+            {(selectedNpsMarker.fcat === 'Campground' || selectedNpsMarker.fcat === 'Campsite') && (
+              <a
+                href={`https://www.recreation.gov/search?q=${encodeURIComponent(selectedNpsMarker.name)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'block', textAlign: 'center',
+                  background: '#f0fdf4', color: '#15803d',
+                  fontSize: 12, fontWeight: 700,
+                  padding: '7px 12px', borderRadius: 8,
+                  textDecoration: 'none',
+                  border: '1px solid #bbf7d0',
+                }}
+              >
+                Reserve on Recreation.gov →
+              </a>
+            )}
+          </div>
         </div>
       )}
     </>

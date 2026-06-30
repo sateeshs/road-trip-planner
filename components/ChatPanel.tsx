@@ -11,6 +11,8 @@ interface ChatPanelProps {
   messages: Message[]
   input: string
   isLoading: boolean
+  chatError?: Error | null
+  onRetry?: () => void
   collapsed: boolean
   onToggle: () => void
   onInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
@@ -22,7 +24,7 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({
-  messages, input, isLoading, collapsed, onToggle,
+  messages, input, isLoading, chatError, onRetry, collapsed, onToggle,
   onInputChange, onSubmit, onExpand, tripStyles, onToggleTripStyle,
 }: ChatPanelProps) {
   const bottomRef   = useRef<HTMLDivElement>(null)
@@ -237,9 +239,19 @@ export default function ChatPanel({
                 </svg>
               </button>
             </div>
-            <p className="text-[10px] text-gray-400 mt-1.5 text-center">
-              Enter to send · Shift+Enter for new line
-            </p>
+            <div className="flex items-center justify-between mt-1.5">
+              <p className="text-[10px] text-gray-400">Enter to send · Shift+Enter for new line</p>
+              {messages.length > 0 && !isLoading && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  title="Resume — re-send last message without duplicating it"
+                  className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 transition-colors flex items-center gap-0.5"
+                >
+                  ▶ Resume
+                </button>
+              )}
+            </div>
           </form>
         </div>
 

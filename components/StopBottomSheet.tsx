@@ -8,13 +8,14 @@ import AttractionCard from './AttractionCard'
 import SurroundingsCard from './SurroundingsCard'
 import SurroundingsCategoryPicker from './SurroundingsCategoryPicker'
 
-type Tab = 'attractions' | 'hotels' | 'surroundings'
+type Tab = 'attractions' | 'hotels' | 'dining' | 'surroundings'
 
 interface StopBottomSheetProps {
   stop: RouteStop | null
   hotels: Hotel[]
   attractions: Attraction[]
   surroundings: Attraction[]
+  restaurants: Attraction[]
   isSurroundingsLoading?: boolean
   isRemovable?: boolean   // false for origin and destination
   onClose: () => void
@@ -28,6 +29,7 @@ export default function StopBottomSheet({
   hotels,
   attractions,
   surroundings,
+  restaurants,
   isSurroundingsLoading,
   isRemovable,
   onClose,
@@ -53,6 +55,7 @@ export default function StopBottomSheet({
   const tabs: Array<{ key: Tab; label: string; emoji?: string; count: number }> = [
     { key: 'attractions', label: 'Attractions', count: attractions.length },
     { key: 'hotels', label: 'Hotels', count: hotels.length },
+    { key: 'dining', label: 'Dining', emoji: '🍽️', count: restaurants.length },
     { key: 'surroundings', label: 'Explore', emoji: '🌲', count: surroundings.length },
   ]
 
@@ -169,6 +172,33 @@ export default function StopBottomSheet({
               <p className="text-sm text-gray-400 py-4 text-center">Ask the AI to find hotels in {stop?.city}</p>
             )
           })()}
+          {tab === 'dining' && (
+            restaurants.length > 0
+              ? (
+                <div className="space-y-2">
+                  {restaurants.map(r => (
+                    <div key={r.id} className="flex items-start gap-3 bg-white border border-orange-100 rounded-xl px-3 py-2.5 shadow-sm">
+                      <span className="text-xl shrink-0 mt-0.5">🍽️</span>
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm text-gray-900 leading-tight truncate">{r.name}</div>
+                        <div className="text-xs text-orange-600 mt-0.5">{r.category}</div>
+                        {r.description && <div className="text-xs text-gray-500 mt-0.5 line-clamp-1">{r.description}</div>}
+                        {r.address && r.address !== stop?.city && (
+                          <div className="text-xs text-gray-400 mt-0.5 truncate">{r.address}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+              : (
+                <div className="text-center py-6 text-gray-400">
+                  <div className="text-3xl mb-2">🍽️</div>
+                  <p className="text-sm">No restaurants found yet</p>
+                  <p className="text-xs mt-1">Ask the AI to find dining options in {stop?.city}</p>
+                </div>
+              )
+          )}
           {tab === 'surroundings' && stop && (
             <div className="space-y-3">
               <SurroundingsCategoryPicker

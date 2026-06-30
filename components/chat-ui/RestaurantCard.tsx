@@ -21,7 +21,7 @@ function categoryEmoji(category: string): string {
 }
 
 export default function RestaurantCard({ result }: Props) {
-  const { restaurants, city } = result
+  const { restaurants = [], city } = result
   const displayed = restaurants.slice(0, 6)
   const overflow = restaurants.length - displayed.length
 

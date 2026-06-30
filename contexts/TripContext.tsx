@@ -6,6 +6,8 @@ import type { BookingSummary } from '@/components/BookingReviewModal'
 import type { RouteStop, Hotel, Attraction, RouteGeometry, ConfirmedReservation, PlanActivity } from '@/types'
 import type { SurroundingsCategory } from '@/lib/foursquare-client'
 import { useProactivePlaces } from '@/hooks/useProactivePlaces'
+import { useProactiveNPS } from '@/hooks/useProactiveNPS'
+import type { NpsMapMarker } from '@/hooks/useProactiveNPS'
 import { reverseGeocode } from '@/lib/route-utils'
 import { runNSGAII } from '@/lib/route-optimizer'
 import type { ParetoRoute } from '@/lib/route-optimizer'
@@ -39,12 +41,14 @@ export interface TripContextValue {
   hotelsByCity: Record<string, Hotel[]>
   attractionsByCity: Record<string, Attraction[]>
   surroundingsByCity: Record<string, Attraction[]>
+  restaurantsByCity: Record<string, Attraction[]>
   isSurroundingsLoading: boolean
 
   // Flat lists for map markers
   allHotels: Hotel[]
   allAttractions: Attraction[]
   allSurroundings: Attraction[]
+  allRestaurants: Attraction[]
 
   // Selection / UI
   selectedStop: RouteStop | null
@@ -61,6 +65,8 @@ export interface TripContextValue {
   messages: Message[]
   input: string
   isLoading: boolean
+  chatError: Error | null
+  retryChat: () => void
   handleInputChange: (e: React.ChangeEvent<HTMLInputElement> | React.ChangeEvent<HTMLTextAreaElement>) => void
   handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void
   setInput: (v: string) => void
@@ -76,6 +82,9 @@ export interface TripContextValue {
 
   // Proactive POIs (gas, food, restrooms, campgrounds)
   proactivePois: ProactivePOIs
+
+  // Proactive NPS map markers (deterministic, no LLM required)
+  npsMarkers: NpsMapMarker[]
 
   // Handlers
   handleExploreSurroundings: (city: string, state: string, categories: SurroundingsCategory[]) => Promise<void>
@@ -138,6 +147,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const [hotelsByCity, setHotelsByCity] = useState<Record<string, Hotel[]>>({})
   const [attractionsByCity, setAttractionsByCity] = useState<Record<string, Attraction[]>>({})
   const [surroundingsByCity, setSurroundingsByCity] = useState<Record<string, Attraction[]>>({})
+  const [restaurantsByCity, setRestaurantsByCity] = useState<Record<string, Attraction[]>>({})
   const [isSurroundingsLoading, setIsSurroundingsLoading] = useState(false)
   // Selection / UI state
   const [selectedStop, setSelectedStop] = useState<RouteStop | null>(null)
@@ -178,11 +188,51 @@ export function TripProvider({ children }: { children: ReactNode }) {
   // ── Proactive POIs ──
   const proactivePois = useProactivePlaces(stops)
 
+  // ── Proactive NPS markers ──
+  const npsMarkers = useProactiveNPS(stops)
+
   // ── Chat ──
-  const { messages, input, handleInputChange, handleSubmit, isLoading, append, setInput } = useChat({
+  const { messages, input, handleInputChange, handleSubmit: _handleSubmit, isLoading, append, setInput, reload, error: chatError } = useChat({
     api: '/api/chat',
-    body: { tripStyles },
   })
+
+  // Wrap handleSubmit to always pass current tripStyles at call time.
+  // Relying on useChat's `body` option is unreliable — the SDK captures it
+  // at mount and may not re-read it when state changes before the first submit.
+  const handleSubmit = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      _handleSubmit(e, { body: { tripStyles } })
+    },
+    [_handleSubmit, tripStyles],
+  )
+
+  // ── Auto-retry on LLM error (once, after 3 s) ──
+  // reload() re-sends the last user message without adding a duplicate to the chat.
+  const retryCountRef = useRef(0)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (chatError && !isLoading && retryCountRef.current === 0) {
+      retryCountRef.current = 1
+      retryTimerRef.current = setTimeout(() => {
+        reload({ body: { tripStyles } })
+      }, 3000)
+    }
+    if (!chatError) {
+      retryCountRef.current = 0
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    }
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatError, isLoading])
+
+  // Manual retry/resume — called by the "Resume" button in the chat UI.
+  const retryChat = useCallback(() => {
+    retryCountRef.current = 0
+    reload({ body: { tripStyles } })
+  }, [reload, tripStyles])
 
   // ── Keep a ref to latest stops so we can read them inside the effect
   //    without adding `stops` to the dependency array (which would cause
@@ -229,9 +279,22 @@ export function TripProvider({ children }: { children: ReactNode }) {
         }))
       }
 
-      // Apply surroundings results
-      for (const { city, surroundings } of batch.surroundingsPatches) {
-        setSurroundingsByCity(prev => ({ ...prev, [city]: surroundings }))
+      // Apply surroundings results (with fuzzy city matching, same as hotels/attractions)
+      for (const { city, surroundings, matchedCity } of batch.surroundingsPatches) {
+        setSurroundingsByCity(prev => ({
+          ...prev,
+          [city]: surroundings,
+          ...(matchedCity ? { [matchedCity]: surroundings } : {}),
+        }))
+      }
+
+      // Apply restaurant results
+      for (const { city, restaurants, matchedCity } of batch.restaurantPatches) {
+        setRestaurantsByCity(prev => ({
+          ...prev,
+          [city]: restaurants,
+          ...(matchedCity ? { [matchedCity]: restaurants } : {}),
+        }))
       }
       if (batch.surroundingsCompleted) setIsSurroundingsLoading(false)
 
@@ -246,6 +309,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const allHotels = Object.values(hotelsByCity).flat()
   const allAttractions = Object.values(attractionsByCity).flat()
   const allSurroundings = Object.values(surroundingsByCity).flat()
+  const allRestaurants = Object.values(restaurantsByCity).flat()
 
   // ── Per-trip cost estimate (confirmed reservations take precedence; otherwise estimate from hotel prices) ──
   const estimatedTripCost = useMemo((): { min: number; max: number; confirmed: boolean } | null => {
@@ -320,6 +384,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
     setHotelsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
     setAttractionsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
     setSurroundingsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
+    setRestaurantsByCity(prev => { const n = { ...prev }; delete n[stop.city]; return n })
     setSelectedStop(null)
     if (updatedStops.length >= 2) {
       const cityList = updatedStops.map(s => `${s.city}, ${s.state}`).join(' → ')
@@ -742,10 +807,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
     hotelsByCity,
     attractionsByCity,
     surroundingsByCity,
+    restaurantsByCity,
     isSurroundingsLoading,
     allHotels,
     allAttractions,
     allSurroundings,
+    allRestaurants,
     selectedStop,
     setSelectedStop,
     confirmedReservations,
@@ -758,9 +825,12 @@ export function TripProvider({ children }: { children: ReactNode }) {
     mapMenu,
     setMapMenu,
     proactivePois,
+    npsMarkers,
     messages,
     input,
     isLoading,
+    chatError: chatError ?? null,
+    retryChat,
     handleInputChange,
     handleSubmit,
     setInput,

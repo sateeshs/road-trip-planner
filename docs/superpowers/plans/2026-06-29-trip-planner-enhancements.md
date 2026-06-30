@@ -2,11 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add structured AI output, restaurant search, trip-style preference chips, cost estimate, and `.ics` calendar export — sourced from two reference apps (Shubhamsaboo/awesome-llm-apps) analyzed against this codebase.
+**Goal:** Add structured AI output, restaurant search, trip-style preference chips, cost estimate, `.ics` calendar export, camping fallback, model failover, and National Parks data integration — sourced from multiple analysis sessions.
 
-**Architecture:** Six additive enhancements on top of the existing Edge streaming pipeline. No backend architecture changes. Restaurant search uses the existing Overpass mirror-racing pattern. Trip styles are passed in the `useChat` body and injected into the system prompt server-side. Cost estimate is derived from existing TripContext state. Calendar export uses a Node.js (non-Edge) API route with `ical-generator`.
+**Architecture:** Additive enhancements on top of the existing Edge streaming pipeline. No backend architecture changes. Restaurant search uses the existing Overpass mirror-racing pattern. Trip styles are passed in the `useChat` body and injected into the system prompt server-side. Cost estimate is derived from existing TripContext state. Calendar export uses a Node.js (non-Edge) API route with `ical-generator`. NPS data uses the official NPS Data API (`developer.nps.gov/api/v1`).
 
 **Tech Stack:** Next.js 15 App Router, TypeScript, Tailwind CSS v4, Vercel AI SDK (`ai`/`@ai-sdk/openai`), Zod, Vitest + @testing-library/react, `ical-generator` (new)
+
+## Implementation Status (as of 2026-06-29)
+
+| Feature | Status | Notes |
+|---|---|---|
+| Trip Style Preference Chips | ✅ DONE | `TripStylePicker.tsx` with `disabled` prop when trip underway |
+| Camping fallback when hotels sparse | ✅ DONE | `osmCampgrounds()` in `lib/claude-tools.ts`; electric hookup priority; `isCamping` flag |
+| Model failover (4-model fallback chain) | ✅ DONE | `app/api/chat/route.ts`; primary: `google/gemini-2.5-flash:free`; fixes 429 errors |
+| Multi-turn stream fix | ✅ DONE | Copy `toDataStreamResponse()` headers to preserve `x-vercel-ai-data-stream: v1` |
+| `search_national_parks` NPS tool | ✅ DONE | Inline tool in `lib/claude-tools.ts`; calls NPS API `/parks`, `/alerts`, `/campgrounds`, `/thingstodo` |
+| Generative UI chat cards | ✅ DONE | See `docs/superpowers/plans/2026-06-29-generative-ui.md` |
+| SYSTEM_PROMPT structured output schema | ⬜ TODO | Task 1 below |
+| `search_restaurants` OSM tool | ⬜ TODO | Task 2 below |
+| RestaurantCard chat component | ⬜ TODO | Task 3 below |
+| Per-trip cost estimate | ⬜ TODO | Task 5 below |
+| `.ics` calendar export | ⬜ TODO | Task 6 below |
 
 ## Global Constraints
 
@@ -1222,3 +1238,93 @@ Manual smoke:
 | `useChat body` strips extra keys | Low | Vercel AI SDK passes body through unchanged; confirmed in SDK source |
 | `tripStyles` body key causes type error in route | Low | Typed with `as { messages: ...; tripStyles?: string[] }` |
 | `useMemo` in TripContext missing dependency | Medium | Lint will catch; `estimatedTripCost` deps are `[stops, hotelsByCity, confirmedReservations]` |
+
+---
+
+## NPS National Parks Integration
+
+### What Was Built (2026-06-29)
+
+`search_national_parks` tool was added inline to `lib/claude-tools.ts`:
+
+- **Trigger**: SYSTEM_PROMPT step 6b — AI calls it when any stop is near a national park
+- **Parameters**: `parkCode` (e.g. `"piro"` for Pictured Rocks), `includeAlerts: boolean`, `includeCampgrounds: boolean`
+- **Data fetched** (parallel `Promise.all`):
+  - `GET /parks?parkCode={code}` — official park info (description, hours, entrance fees, contacts)
+  - `GET /alerts?parkCode={code}` — active closures, hazards, notices
+  - `GET /campgrounds?parkCode={code}` — campground details, reservation info, amenities
+  - `GET /thingstodo?parkCode={code}` — activities list with duration, difficulty, accessibility, fee
+- **API Key**: `process.env.NPS_API_KEY ?? 'DEMO_KEY'` (DEMO_KEY = 30 req/hr; real key = 1000 req/hr)
+- **SYSTEM_PROMPT guidance**: mention active closures upfront, highlight electric hookup campgrounds, link to recreation.gov
+
+Common park codes in SYSTEM_PROMPT: `piro` (Pictured Rocks), `yell` (Yellowstone), `grca` (Grand Canyon), `grsm` (Great Smoky Mountains), `zion`, `arch`, `romo` (Rocky Mountain), `olym`, `glac`, `yose`, `acad`, `shen`, `badl`, `cuva`, `indu`, `isle`, `slbe`, `voya`, `apis`
+
+### NPS Data Source Assessment
+
+#### Option A: Official NPS Data API — **Current Implementation** ✅
+
+URL: `https://developer.nps.gov/api/v1`
+
+**Pros:**
+- Free, official, always up-to-date
+- Real-time alerts (road closures, fire restrictions, trail conditions)
+- 28 endpoints: parks, campgrounds, alerts, thingstodo, visitorcenters, tours, webcams, roadevents, multimedia, etc.
+- DEMO_KEY works without registration for low traffic
+
+**Cons:**
+- Rate limited: 30 req/hr (DEMO_KEY) / 1000 req/hr (registered key)
+- Each park fetch = 4 parallel API calls; at 4 stops = 16 calls against 30/hr limit
+
+**Action needed**: Add `NPS_API_KEY` to Vercel environment variables for production (1000 req/hr)
+
+#### Option B: tonymet/nps-public-data — BigQuery Mirror ❌ (not suitable for per-request use)
+
+URL: `https://github.com/tonymet/nps-public-data`
+
+Mirrors all 28 NPS API endpoints into Google BigQuery: `nps-public-data.nps_public_data.*`
+
+**Architecture**: `migrate-table.sh` script → curl NPS API → jq → JSONL → `bq load`; weekly cron refresh
+
+**Pros:**
+- Bulk queries across all parks simultaneously (SQL joins across `parks`, `campgrounds`, `thingstodo`)
+- No per-request NPS API rate limits once loaded
+- All 28 endpoints available as BQ tables
+
+**Cons:**
+- Requires Google Cloud auth (`gcloud auth` or service account) — cannot be used from Edge runtime
+- Weekly refresh = stale alerts (a fire closure could be missed for up to 7 days)
+- Additional infra dependency (BigQuery billing, service account key management)
+- `migrate-table.sh` must be run manually or scheduled; not self-updating
+
+**Best use case**: Offline analysis, finding all parks within a bounding box, building park-code lookup tables, populating a static lookup without hitting NPS API limits. Not suitable for real-time per-request data.
+
+#### Option C: nationalparkservice/data — GeoJSON Overlays 🗺️ (future enhancement)
+
+URL: `https://github.com/nationalparkservice/data`
+
+Contains:
+- `points_of_interest.geojson` (~5MB) — all NPS POIs with coordinates, names, categories
+- Park boundary polygons (WGS84) — usable as Leaflet GeoJSON overlays
+- Administrative boundaries by state
+
+**Best use case**: Drawing park boundaries on the Leaflet map when a route passes through a national park. Currently NOT implemented.
+
+### Future NPS Enhancements
+
+| Enhancement | Effort | Value |
+|---|---|---|
+| Add `NPS_API_KEY` to Vercel env vars | Low | Removes 30 req/hr DEMO_KEY limit |
+| Wire `search_national_parks` campgrounds → Hotel panel | Medium | Replaces OSM campgrounds with authoritative NPS data for parks |
+| Draw park boundary polygon on Leaflet map | Medium | Visual indicator when route enters a national park |
+| Add NPS webcam URLs for current conditions | Low | Surface live webcam links in StopBottomSheet or chat card |
+| Bulk park-code lookup from tonymet BigQuery | High | Useful only if building a "parks near route" feature requiring SQL |
+| NPS `roadevents` endpoint for road closures | Low | Real-time seasonal road closure warnings (Yellowstone, Rocky Mtn) |
+| NPS `thingstodo` → Attractions tab in StopBottomSheet | Medium | Show NPS-curated activities alongside Foursquare/OSM results |
+
+### Task 7: Wire NPS Campgrounds into Hotel Panel
+
+**Files:**
+- Modify: `lib/claude-tools.ts` — in `search_hotels` fallback, prefer NPS campgrounds over OSM campgrounds when parkCode is known
+- Modify: `types/index.ts` — add optional `npsUrl?: string` field to `Hotel` interface for recreation.gov booking link
+
+**Status**: Not yet implemented. Low priority until `NPS_API_KEY` is in Vercel.

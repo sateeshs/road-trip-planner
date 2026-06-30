@@ -6,7 +6,63 @@
 
 **Architecture:** Three Cloudflare Workers (`routing-mcp`, `places-mcp`, `hotels-mcp`) each expose a `POST /mcp` endpoint using MCP Streamable HTTP transport. The Next.js `app/api/chat/route.ts` creates three MCP clients per request using `experimental_createMCPClient`, fetches tool schemas, and merges them into `streamText()`. Tool names and parameter shapes are identical to the current inline tools so `TripContext`, the card components, and `SYSTEM_PROMPT` require no changes.
 
-**Tech Stack:** `@modelcontextprotocol/sdk ^1.12.0`, `zod ^3.23`, `wrangler ^3.78`, `vitest ^2.0`, `ai ^4.3.16` (already installed in Next.js app), Node v22.13.1
+**Tech Stack:** `@modelcontextprotocol/sdk ^1.12.0`, `zod ^3.23`, `wrangler ^3.78`, `vitest ^2.0`, `ai ^4.3.16` (already installed in Next.js app), Node v22.13.1, Cloudflare D1 (SQLite edge database for NPS POI data)
+
+## NPS D1 Data Source
+
+`places-mcp` and `hotels-mcp` query a Cloudflare D1 SQLite database (`road-trip-nps`) populated from the NPS `points_of_interest.geojson` dataset (3,923 rows, 944 KB). This augments OSM/Overpass with authoritative NPS campground, trailhead, overlook, and boat launch data.
+
+**One-time setup (run before deploying workers):**
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$PATH"
+
+# 1. Login to Cloudflare (browser opens)
+npx wrangler login
+
+# 2. Download NPS data and build local SQLite
+python3 scripts/nps_poi_to_sqlite.py
+# Output: data/nps_places.db (3,923 rows)
+
+# 3. Create D1 database in Cloudflare
+cd mcp-servers/places-mcp
+npx wrangler d1 create road-trip-nps
+# Outputs: database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# Copy this ID into both wrangler.toml files (replace FILL_AFTER_WRANGLER_D1_CREATE)
+
+# 4. Import data into D1
+cd ../..
+npx wrangler d1 import road-trip-nps data/nps_places.db \
+  --remote --local=false
+# Expected: Imported 3923 rows successfully
+```
+
+**D1 binding in wrangler.toml (both places-mcp and hotels-mcp):**
+```toml
+[[d1_databases]]
+binding = "NPS_DB"
+database_name = "road-trip-nps"
+database_id = "FILL_AFTER_WRANGLER_D1_CREATE"
+```
+
+**Schema (table: `nps_places`):**
+```sql
+CREATE TABLE nps_places (
+  id        TEXT PRIMARY KEY,
+  name      TEXT NOT NULL,
+  park_code TEXT NOT NULL,
+  fcat      TEXT NOT NULL,  -- facility category
+  lat       REAL NOT NULL,
+  lng       REAL NOT NULL
+);
+CREATE INDEX idx_bbox      ON nps_places(lat, lng);
+CREATE INDEX idx_park_fcat ON nps_places(park_code, fcat);
+```
+
+**Facility categories used:**
+- `places-mcp explore_surroundings`: Overlook, Trailhead, Boat Launch, Canoe Access, Swim, Point of Interest, Historic Building
+- `places-mcp explore_nps_park`: all categories above + Visitor Center, Ranger Station, Entrance Station, Park Headquarters, Food Service, Picnic Area  
+- `hotels-mcp search_hotels` (fallback when OSM < 2 hotels): Campground, Campsite, Lodge
 
 ## Global Constraints
 
@@ -45,12 +101,14 @@ mcp-servers/
 
   places-mcp/
     src/
-      index.ts           — McpServer + search_attractions, search_restaurants, explore_surroundings
+      index.ts           — McpServer + search_attractions, search_restaurants, explore_surroundings, explore_nps_park
       route-utils.ts     — resolveCityCoords (ported)
       overpass-client.ts — overpassQuery, OsmElement (ported from lib/overpass-client.ts)
       osm-helpers.ts     — osmCategory, osmAddress, osmAttractions, osmSurroundingsQuery,
                            parseSurroundingsElements, category constants (ported from lib/claude-tools.ts)
-    wrangler.toml
+      nps-client.ts      — npsByBbox, npsByParkCode, fcatToCategory, SURROUNDINGS_FCATS,
+                           ALL_VISITOR_FCATS (queries Cloudflare D1 NPS database)
+    wrangler.toml        — includes [[d1_databases]] NPS_DB binding
     package.json
     tsconfig.json
     vitest.config.ts
@@ -59,11 +117,12 @@ mcp-servers/
 
   hotels-mcp/
     src/
-      index.ts           — McpServer + search_hotels, check_hotel_availability, build_booking_summary
+      index.ts           — McpServer + search_hotels (with D1 campground fallback), check_hotel_availability, build_booking_summary
       route-utils.ts     — resolveCityCoords (ported)
       overpass-client.ts — overpassQuery, OsmElement (ported)
       osm-hotel-helpers.ts — osmHotels, STAR_PRICE, HOTEL_PRICE_TIER, osmAddress (ported)
-    wrangler.toml
+      nps-client.ts      — npsByBbox, CAMPGROUND_FCATS (queries D1 for campgrounds/lodges)
+    wrangler.toml        — includes [[d1_databases]] NPS_DB binding
     package.json
     tsconfig.json
     vitest.config.ts
@@ -156,6 +215,11 @@ name = "road-trip-places-mcp"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "NPS_DB"
+database_name = "road-trip-nps"
+database_id = "FILL_AFTER_WRANGLER_D1_CREATE"
 ```
 
 `mcp-servers/hotels-mcp/wrangler.toml`:
@@ -164,6 +228,11 @@ name = "road-trip-hotels-mcp"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "NPS_DB"
+database_name = "road-trip-nps"
+database_id = "FILL_AFTER_WRANGLER_D1_CREATE"
 ```
 
 - [ ] **Step 5: Write tsconfig.json for all three Workers**
@@ -751,12 +820,13 @@ git commit -m "feat: routing-mcp Worker with suggest_route_stops tool"
 - Create: `mcp-servers/places-mcp/src/route-utils.ts`
 - Create: `mcp-servers/places-mcp/src/overpass-client.ts`
 - Create: `mcp-servers/places-mcp/src/osm-helpers.ts`
+- Create: `mcp-servers/places-mcp/src/nps-client.ts`
 - Create: `mcp-servers/places-mcp/__tests__/osm-helpers.test.ts`
 - Modify: `mcp-servers/places-mcp/src/index.ts`
 
 **Interfaces:**
-- Consumes: `overpassQuery` from `overpass-client.ts`, `resolveCityCoords` from `route-utils.ts`
-- Produces: MCP Worker at `POST /mcp` with tools `search_attractions`, `search_restaurants`, `explore_surroundings`
+- Consumes: `overpassQuery` from `overpass-client.ts`, `resolveCityCoords` from `route-utils.ts`, `env.NPS_DB: D1Database`
+- Produces: MCP Worker at `POST /mcp` with tools `search_attractions`, `search_restaurants`, `explore_surroundings`, `explore_nps_park`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1012,7 +1082,15 @@ out ${limit * 2};`
 }
 ```
 
-- [ ] **Step 5: Run tests — verify they PASS**
+- [ ] **Step 5: Write src/nps-client.ts (D1 query helpers)**
+
+`mcp-servers/places-mcp/src/nps-client.ts` — already created. Content is the same as shown in the NPS D1 Data Source section above. The file exports:
+- `npsByBbox(db, lat, lng, radiusKm, fcats, limit)` — bounding-box query
+- `npsByParkCode(db, parkCode, fcats, limit)` — park-specific query
+- `fcatToCategory(fcat)` — maps facility category to UI display string
+- `SURROUNDINGS_FCATS`, `CAMPGROUND_FCATS`, `ALL_VISITOR_FCATS` — category constants
+
+- [ ] **Step 6: Run tests — verify they PASS**
 
 ```bash
 export PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$PATH"
@@ -1021,12 +1099,29 @@ cd mcp-servers/places-mcp && npm test 2>&1 | tail -10
 
 Expected: `Tests 6 passed (6)`
 
-- [ ] **Step 6: Write src/index.ts — McpServer with 3 place tools**
+- [ ] **Step 7: Write src/index.ts — McpServer with 4 place tools (OSM + NPS D1)**
 
-`mcp-servers/places-mcp/src/index.ts`:
+`mcp-servers/places-mcp/src/index.ts` — already updated. Key additions vs. the original plan:
+- `interface Env { NPS_DB: D1Database }` — D1 binding
+- `createServer(env: Env)` — takes env
+- `explore_surroundings`: runs `osmSurroundingsQuery` + `npsByBbox` in parallel, merges NPS-first
+- `explore_nps_park`: new tool — queries `npsByParkCode` for full park POI detail, groups by fcat
+
+The file already exists at `mcp-servers/places-mcp/src/index.ts` with these changes. Verify:
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$PATH"
+cd mcp-servers/places-mcp && npx tsc --noEmit 2>&1 | tail -10
+```
+
+Expected: no TypeScript errors.
+
+- [ ] **Step 7b: (legacy reference — superseded)** Write src/index.ts — McpServer with 3 place tools
+
+`mcp-servers/places-mcp/src/index.ts` (original template before D1 — kept for reference):
 ```typescript
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
 import { resolveCityCoords } from './route-utils'
 import { overpassQuery } from './overpass-client'
@@ -1136,22 +1231,23 @@ export default {
 }
 ```
 
-- [ ] **Step 7: Smoke test with wrangler dev**
+- [ ] **Step 8: Smoke test with wrangler dev**
 
 ```bash
 export PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$PATH"
 cd mcp-servers/places-mcp && npx wrangler dev --port 8788 &
 sleep 3
 curl -s http://localhost:8788/health
-# Expected: {"status":"ok","server":"places-mcp"}
+# Expected: {"status":"ok","server":"places-mcp","d1":false}
+# (d1:false in local dev until D1 database is created and imported)
 kill %1
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add mcp-servers/places-mcp/
-git commit -m "feat: places-mcp Worker with search_attractions, search_restaurants, explore_surroundings"
+git commit -m "feat: places-mcp Worker with search_attractions, search_restaurants, explore_surroundings, explore_nps_park (D1)"
 ```
 
 ---
@@ -1162,12 +1258,13 @@ git commit -m "feat: places-mcp Worker with search_attractions, search_restauran
 - Create: `mcp-servers/hotels-mcp/src/route-utils.ts`
 - Create: `mcp-servers/hotels-mcp/src/overpass-client.ts`
 - Create: `mcp-servers/hotels-mcp/src/osm-hotel-helpers.ts`
+- Create: `mcp-servers/hotels-mcp/src/nps-client.ts`
 - Create: `mcp-servers/hotels-mcp/__tests__/osm-hotel-helpers.test.ts`
 - Modify: `mcp-servers/hotels-mcp/src/index.ts`
 
 **Interfaces:**
-- Consumes: `overpassQuery` from `overpass-client.ts`, `resolveCityCoords` from `route-utils.ts`
-- Produces: MCP Worker at `POST /mcp` with tools `search_hotels`, `check_hotel_availability`, `build_booking_summary`
+- Consumes: `overpassQuery` from `overpass-client.ts`, `resolveCityCoords` from `route-utils.ts`, `env.NPS_DB: D1Database`
+- Produces: MCP Worker at `POST /mcp` with tools `search_hotels` (OSM hotels + NPS campground fallback), `check_hotel_availability`, `build_booking_summary`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1374,12 +1471,30 @@ cd mcp-servers/hotels-mcp && npm test 2>&1 | tail -10
 
 Expected: `Tests 4 passed (4)`
 
-- [ ] **Step 6: Write src/index.ts — McpServer with 3 hotel tools**
+- [ ] **Step 5b: Write src/nps-client.ts (D1 campground queries)**
 
-`mcp-servers/hotels-mcp/src/index.ts`:
+`mcp-servers/hotels-mcp/src/nps-client.ts` — already created (copy of places-mcp/nps-client.ts). Used in `search_hotels` to supplement OSM results with NPS campgrounds and lodges when OSM returns fewer than 2 hotels.
+
+- [ ] **Step 6: Write src/index.ts — McpServer with 3 hotel tools + D1 campground fallback**
+
+`mcp-servers/hotels-mcp/src/index.ts` — already updated with D1 integration. Key additions:
+- `interface Env { NPS_DB: D1Database }` — D1 binding
+- `createServer(env: Env)` — takes env
+- In `search_hotels`: after `osmHotels(city)`, if `hotels.length < 2`, calls `npsByBbox(env.NPS_DB, ...)` with `CAMPGROUND_FCATS` and appends NPS campgrounds/lodges as Hotel objects with `dealTag: 'NPS Property'`
+- Health endpoint includes `d1: !!env.NPS_DB`
+
+Verify the current file type-checks:
+```bash
+export PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$PATH"
+cd mcp-servers/hotels-mcp && npx tsc --noEmit 2>&1 | tail -10
+```
+
+Expected: no TypeScript errors.
+
+- [ ] **Step 6b: (legacy reference — superseded)** Original index.ts template before D1:
 ```typescript
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
 import { osmHotels, buildBookingSummaryPayload } from './osm-hotel-helpers'
 
@@ -1486,10 +1601,11 @@ git commit -m "feat: hotels-mcp Worker with search_hotels, check_hotel_availabil
 ## Task 5: Deploy all 3 Workers to Cloudflare
 
 **Files:**
-- No code changes — deploy existing Workers
+- Modify: `mcp-servers/places-mcp/wrangler.toml` — fill in actual `database_id`
+- Modify: `mcp-servers/hotels-mcp/wrangler.toml` — fill in actual `database_id`
 
 **Interfaces:**
-- Produces: Three live production URLs recorded in `.env.local`
+- Produces: Three live production URLs recorded in `.env.local`, D1 database populated with 3,923 NPS POIs
 
 > **Pre-requisite:** You need a free Cloudflare account. Run `npx wrangler login` once to authenticate.
 
@@ -1501,6 +1617,36 @@ cd mcp-servers/routing-mcp && npx wrangler login
 ```
 
 A browser tab opens. Log in with your Cloudflare account (free tier is sufficient). Returns to terminal when complete.
+
+- [ ] **Step 1b: Create D1 database and import NPS data**
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v22.13.1/bin:$PATH"
+
+# Build local SQLite (if not already done)
+python3 scripts/nps_poi_to_sqlite.py
+
+# Create D1 database — copy the database_id from output
+cd mcp-servers/places-mcp
+npx wrangler d1 create road-trip-nps
+# OUTPUT: database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Paste database_id into both wrangler.toml files
+# (replace FILL_AFTER_WRANGLER_D1_CREATE in places-mcp/wrangler.toml and hotels-mcp/wrangler.toml)
+
+# Import NPS data
+cd ../..
+npx wrangler d1 import road-trip-nps data/nps_places.db \
+  --remote --local=false \
+  --config mcp-servers/places-mcp/wrangler.toml
+# Expected: Imported 3923 rows
+
+# Verify
+npx wrangler d1 execute road-trip-nps \
+  --config mcp-servers/places-mcp/wrangler.toml \
+  --remote \
+  --command "SELECT fcat, COUNT(*) as n FROM nps_places GROUP BY fcat ORDER BY n DESC LIMIT 5"
+```
 
 - [ ] **Step 2: Deploy routing-mcp**
 
@@ -1543,10 +1689,10 @@ curl -s https://road-trip-routing-mcp.<subdomain>.workers.dev/health
 # Expected: {"status":"ok","server":"routing-mcp"}
 
 curl -s https://road-trip-places-mcp.<subdomain>.workers.dev/health
-# Expected: {"status":"ok","server":"places-mcp"}
+# Expected: {"status":"ok","server":"places-mcp","d1":true}
 
 curl -s https://road-trip-hotels-mcp.<subdomain>.workers.dev/health
-# Expected: {"status":"ok","server":"hotels-mcp"}
+# Expected: {"status":"ok","server":"hotels-mcp","d1":true}
 ```
 
 - [ ] **Step 6: Write .env.local additions**

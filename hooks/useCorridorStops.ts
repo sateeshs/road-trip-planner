@@ -34,6 +34,7 @@ const MIRRORS = [
 interface OverpassEl {
   id: number; type: string
   lat?: number; lon?: number
+  center?: { lat: number; lon: number }
   tags?: Record<string, string>
 }
 
@@ -42,20 +43,25 @@ async function overpassRace(ql: string, signal: AbortSignal): Promise<OverpassEl
   // Abort all mirrors when the outer signal fires
   signal.addEventListener('abort', () => controllers.forEach(c => c.abort()), { once: true })
 
-  const requests = MIRRORS.map((url, i) =>
-    fetch(url, {
+  const requests = MIRRORS.map((url, i) => {
+    // 30s hard timeout per mirror (server-side Overpass timeout is 25s, so this is a safety net)
+    const timer = setTimeout(() => controllers[i].abort(), 30_000)
+    return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: `data=${encodeURIComponent(ql)}`,
       signal: controllers[i].signal,
     })
-      .then(r => r.ok ? r.json() as Promise<{ elements?: OverpassEl[] }> : Promise.reject())
+      .then(r => r.ok ? r.json() as Promise<{ elements?: OverpassEl[]; remark?: string }> : Promise.reject())
       .then(d => {
+        clearTimeout(timer)
+        if (d.remark) return Promise.reject(new Error('Overpass timeout'))
         // Cancel the other mirrors
         controllers.forEach((c, j) => j !== i && c.abort())
         return d.elements ?? []
       })
-  )
+      .catch(e => { clearTimeout(timer); return Promise.reject(e) })
+  })
 
   try {
     return await Promise.any(requests)
@@ -244,11 +250,28 @@ function categoryEmoji(tags: Record<string, string>): { category: string; emoji:
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
-const SAMPLE_EVERY_MILES = 25
-const MAX_SAMPLE_POINTS  = 10
-const QUERY_RADIUS_M     = 14000  // ~8.7 miles
-const MAX_PER_POINT      = 8
-const MAX_TOTAL          = 12
+const SAMPLE_EVERY_MILES  = 25
+const MAX_SAMPLE_POINTS   = 10
+const QUERY_RADIUS_M      = 14000  // ~8.7 miles — for route sample points
+const PER_STOP_RADIUS_M   = 20000  // ~12.5 miles — wider net for each named stop
+const MAX_PER_POINT       = 8
+const MAX_TOTAL           = 20     // increased to accommodate per-stop results
+
+// nwr for tourism/historic/natural/leisure (museums, ruins, parks are often mapped as ways/relations).
+// node-only for sport/amenity/attraction (these are almost always nodes, and node queries are 10x faster).
+// Timeout 25s — nwr queries are slower than node-only; 15s was causing all mirrors to time out.
+const POI_QUERY = (radius: number, lat: number, lng: number, limit: number) => `[out:json][timeout:25];
+(
+  nwr["tourism"~"attraction|museum|viewpoint|theme_park|zoo|aquarium"]["name"](around:${radius},${lat},${lng});
+  nwr["historic"~"monument|memorial|castle|ruins|archaeological_site"]["name"](around:${radius},${lat},${lng});
+  nwr["natural"~"peak|waterfall|beach|hot_spring|cave_entrance"]["name"](around:${radius},${lat},${lng});
+  nwr["leisure"~"nature_reserve|marina|water_park"]["name"](around:${radius},${lat},${lng});
+  nwr["tourism"~"boat_tour|camp_site"]["name"](around:${radius},${lat},${lng});
+  node["amenity"~"boat_rental"]["name"](around:${radius},${lat},${lng});
+  node["sport"~"kayak|kayaking|canoe|canoeing|sailing|rafting|rowing"]["name"](around:${radius},${lat},${lng});
+  node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift"]["name"](around:${radius},${lat},${lng});
+);
+out center ${limit};`
 
 export function useCorridorStops(
   routeGeometry: RouteGeometry | null,
@@ -276,87 +299,96 @@ export function useCorridorStops(
       abortRef.current = controller
 
       try {
-        const samplePoints = sampleRoutePoints(routeGeometry, SAMPLE_EVERY_MILES, MAX_SAMPLE_POINTS)
-        if (samplePoints.length === 0) return
-
         // Existing stop city names for dedup
         const existingCities = new Set(stops.map(s => s.city.toLowerCase()))
 
-        // Query each sample point in parallel
-        const ql = (lat: number, lng: number) => `[out:json][timeout:12];
-(
-  node["tourism"~"attraction|museum|viewpoint|theme_park|zoo|aquarium"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["historic"~"monument|memorial|castle|ruins|archaeological_site"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["natural"~"peak|waterfall|beach|hot_spring|cave_entrance"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["leisure"~"nature_reserve|marina|water_park"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["tourism"~"boat_tour|camp_site"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["amenity"~"boat_rental"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["sport"~"kayak|kayaking|canoe|canoeing|sailing|rafting|rowing"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-);
-out ${MAX_PER_POINT};`
-
-        const batches = await Promise.all(
-          samplePoints.map(p => overpassRace(ql(p.lat, p.lng), controller.signal))
-        )
-
-        if (controller.signal.aborted) return
-
-        // Precompute each stop's fraction along the route once — used for
-        // "Near [City]" labelling. Route-fraction comparison is far more accurate
-        // than haversine on routes that curve (e.g. Northville → Soo Locks → Pictured Rocks
-        // arcs east then west, making geographic distance to Northville misleadingly short
-        // for POIs that are actually near the destination).
+        // Precompute each stop's fraction along the route once
         const stopFractions = stops.map(s =>
           routeFractionOf(s.coordinates.lat, s.coordinates.lng, routeGeometry)
         )
 
-        // Flatten, dedup by name, filter out existing stops and unnamed/short names
+        // ── Per-stop queries ────────────────────────────────────────────────
+        // Query around EVERY named stop directly. This guarantees coverage for
+        // each stop regardless of how geometry sample points fall.
+        const perStopBatches = await Promise.all(
+          stops.map(stop =>
+            overpassRace(POI_QUERY(PER_STOP_RADIUS_M, stop.coordinates.lat, stop.coordinates.lng, MAX_PER_POINT), controller.signal)
+          )
+        )
+
+        // ── Route geometry sample queries ───────────────────────────────────
+        // Sample points every ~25 miles to catch POIs between stops.
+        const samplePoints = sampleRoutePoints(routeGeometry, SAMPLE_EVERY_MILES, MAX_SAMPLE_POINTS)
+        const sampleBatches = samplePoints.length > 0
+          ? await Promise.all(
+              samplePoints.map(p =>
+                overpassRace(POI_QUERY(QUERY_RADIUS_M, p.lat, p.lng, MAX_PER_POINT), controller.signal)
+              )
+            )
+          : []
+
+        if (controller.signal.aborted) return
+
         const seen = new Set<string>()
         const candidates: CorridorStop[] = []
 
-        batches.forEach((elements, batchIdx) => {
-          const sampleFraction = samplePoints[batchIdx].fraction
+        function addElement(el: OverpassEl, hintFraction?: number, hintCity?: string) {
+          const lat = el.lat ?? el.center?.lat
+          const lon = el.lon ?? el.center?.lon
+          if (!lat || !lon) return
+          const tags = el.tags ?? {}
+          const name = tags.name ?? tags['name:en']
+          if (!name || name.length < 3) return
 
-          for (const el of elements) {
-            if (!el.lat || !el.lon) continue
-            const tags = el.tags ?? {}
-            const name = tags.name ?? tags['name:en']
-            if (!name || name.length < 3) continue
+          const nameKey = name.toLowerCase().replace(/[^a-z0-9]/g, '')
+          if (seen.has(nameKey)) return
 
-            const nameKey = name.toLowerCase().replace(/[^a-z0-9]/g, '')
-            if (seen.has(nameKey)) continue
+          const isExisting = existingCities.has(name.toLowerCase()) ||
+            [...existingCities].some(city =>
+              nameKey.includes(city.replace(/[^a-z0-9]/g, '')) ||
+              city.replace(/[^a-z0-9]/g, '').includes(nameKey)
+            )
+          if (isExisting) return
 
-            // Skip if matches an existing stop city
-            const isExisting = existingCities.has(name.toLowerCase()) ||
-              [...existingCities].some(city => nameKey.includes(city.replace(/[^a-z0-9]/g, '')) || city.replace(/[^a-z0-9]/g, '').includes(nameKey))
-            if (isExisting) continue
+          seen.add(nameKey)
 
-            seen.add(nameKey)
+          const geo = routeGeometry!
+          const distKm = distToRoute(lat, lon, geo)
+          const distMiles = distKm / KM_PER_MILE
+          // Per-stop results: allow up to 12.5 miles; corridor samples: 8 miles
+          const maxDist = hintCity ? 12.5 : 8
+          if (distMiles > maxDist) return
 
-            const distKm = distToRoute(el.lat, el.lon, routeGeometry)
-            const distMiles = distKm / KM_PER_MILE
+          const fraction = hintFraction ?? routeFractionOf(lat, lon, geo)
+          const { category, emoji } = categoryEmoji(tags)
 
-            // Only include POIs within 8 miles of the route
-            if (distMiles > 8) continue
+          candidates.push({
+            id: `corridor-${el.type}-${el.id}`,
+            name,
+            category,
+            emoji,
+            lat,
+            lng: lon,
+            distanceMiles: Math.round(distMiles * 10) / 10,
+            routeFraction: fraction,
+            nearStopCity: hintCity ?? nearestStopByFraction(fraction, stops, stopFractions),
+          })
+        }
 
-            const { category, emoji } = categoryEmoji(tags)
-
-            candidates.push({
-              id: `corridor-${el.type}-${el.id}`,
-              name,
-              category,
-              emoji,
-              lat: el.lat,
-              lng: el.lon,
-              distanceMiles: Math.round(distMiles * 10) / 10,
-              routeFraction: sampleFraction,
-              nearStopCity: nearestStopByFraction(sampleFraction, stops, stopFractions),
-            })
-          }
+        // Add per-stop results first — they are most reliable
+        perStopBatches.forEach((elements, stopIdx) => {
+          const stop = stops[stopIdx]
+          const fraction = stopFractions[stopIdx]
+          for (const el of elements) addElement(el, fraction, stop.city)
         })
 
-        // Sort by route position (so chips appear in travel order), cap at MAX_TOTAL
+        // Add corridor sample results (fills in between-stop gaps)
+        sampleBatches.forEach((elements, batchIdx) => {
+          const fraction = samplePoints[batchIdx].fraction
+          for (const el of elements) addElement(el, fraction)
+        })
+
+        // Sort by route position, cap at MAX_TOTAL
         const sorted = candidates
           .sort((a, b) => a.routeFraction - b.routeFraction)
           .slice(0, MAX_TOTAL)
