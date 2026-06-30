@@ -2,3 +2,8 @@ name = "road-trip-places-mcp"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "NPS_DB"
+database_name = "road-trip-nps"
+database_id = "FILL_AFTER_WRANGLER_D1_CREATE"
