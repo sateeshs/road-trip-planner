@@ -139,11 +139,36 @@ export default function StopBottomSheet({
               ? <div className="grid grid-cols-2 gap-2">{attractions.map(a => <AttractionCard key={a.id} attraction={a} onSave={stop ? () => addToPlan(a, stop, 'attraction') : undefined} saved={isInPlan(a.id)} />)}</div>
               : <p className="text-sm text-gray-400 py-4 text-center">Ask the AI about places to visit in {stop?.city}</p>
           )}
-          {tab === 'hotels' && (
-            hotels.length > 0
-              ? <div className="grid grid-cols-2 gap-2">{hotels.map(h => <HotelCard key={h.hotelId} hotel={h} onSelect={onSelectHotel} />)}</div>
-              : <p className="text-sm text-gray-400 py-4 text-center">Ask the AI to find hotels in {stop?.city}</p>
-          )}
+          {tab === 'hotels' && (() => {
+            const regularHotels = hotels.filter(h => !h.isCamping)
+            const campgrounds = hotels.filter(h => h.isCamping)
+            return hotels.length > 0 ? (
+              <div className="space-y-3">
+                {regularHotels.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {regularHotels.map(h => <HotelCard key={h.hotelId} hotel={h} onSelect={onSelectHotel} />)}
+                  </div>
+                )}
+                {campgrounds.length > 0 && (
+                  <div>
+                    {regularHotels.length === 0 && (
+                      <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-2">
+                        ⛺ No hotels found nearby — showing campground alternatives
+                      </p>
+                    )}
+                    {regularHotels.length > 0 && (
+                      <p className="text-xs text-gray-400 font-medium mb-1.5 mt-1">⛺ Camping Alternatives</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      {campgrounds.map(h => <HotelCard key={h.hotelId} hotel={h} onSelect={onSelectHotel} />)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400 py-4 text-center">Ask the AI to find hotels in {stop?.city}</p>
+            )
+          })()}
           {tab === 'surroundings' && stop && (
             <div className="space-y-3">
               <SurroundingsCategoryPicker

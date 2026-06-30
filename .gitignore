@@ -37,3 +37,9 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# MCP Servers
+mcp-servers/*/node_modules/
+mcp-servers/*/.wrangler/
+mcp-servers/*/dist/
+mcp-servers/*/*.d.ts

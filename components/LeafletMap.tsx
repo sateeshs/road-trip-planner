@@ -6,6 +6,7 @@ import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
 import type { RouteStop, Attraction, Hotel, RouteGeometry, ConfirmedReservation } from '@/types'
 import type { ProactivePOIs } from '@/hooks/useProactivePlaces'
+import type { CorridorStop } from '@/hooks/useCorridorStops'
 import MapControlsPill from './MapControlsPill'
 
 // Fix default Leaflet icon URLs (Vite/Next.js bundler issue — ported from TREK)
@@ -358,11 +359,12 @@ interface LeafletMapProps {
   onMapRightClick?: (lat: number, lng: number, x: number, y: number) => void
   confirmedReservations?: ConfirmedReservation[]
   proactivePOIs?: ProactivePOIs
+  highlightedCorridorStops?: CorridorStop[]
 }
 
 export default function LeafletMap({
   stops, attractions, surroundings, hotels, routeGeometry, selectedStop, onStopClick,
-  onMapRightClick, confirmedReservations = [], proactivePOIs,
+  onMapRightClick, confirmedReservations = [], proactivePOIs, highlightedCorridorStops = [],
 }: LeafletMapProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [segmentCard, setSegmentCard] = useState<{ info: SegmentInfo; x: number; y: number } | null>(null)
@@ -663,6 +665,48 @@ export default function LeafletMap({
             eventHandlers={{
               mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Campground', p.category),
               mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, p.name || 'Campground', p.category),
+              mouseout: hideTooltip,
+            }}
+          />
+        ))}
+
+        {/* ── Highlighted corridor stops (On Your Way pins — all added/previewed) ── */}
+        {highlightedCorridorStops.map(cs => (
+          <Marker
+            key={`corridor-highlight-${cs.id}`}
+            position={[cs.lat, cs.lng]}
+            icon={L.divIcon({
+              className: '',
+              iconAnchor: [20, 48],
+              html: `
+                <div style="position:relative;width:40px;">
+                  <div style="
+                    width:40px;height:40px;
+                    background:linear-gradient(135deg,#f59e0b,#d97706);
+                    border-radius:50% 50% 50% 0;
+                    transform:rotate(-45deg);
+                    border:3px solid white;
+                    box-shadow:0 3px 14px rgba(0,0,0,0.35),0 0 0 3px rgba(245,158,11,0.3);
+                  "></div>
+                  <div style="
+                    position:absolute;top:50%;left:50%;
+                    transform:translate(-50%,-58%) rotate(0deg);
+                    font-size:18px;line-height:1;
+                  ">${cs.emoji}</div>
+                  <div style="
+                    position:absolute;bottom:-22px;left:50%;transform:translateX(-50%);
+                    background:#d97706;color:white;
+                    font-size:8px;font-weight:800;letter-spacing:0.3px;
+                    padding:2px 6px;border-radius:99px;
+                    white-space:nowrap;border:1.5px solid white;
+                    box-shadow:0 1px 4px rgba(0,0,0,0.25);
+                    max-width:100px;overflow:hidden;text-overflow:ellipsis;
+                  ">${cs.name}</div>
+                </div>`,
+            })}
+            eventHandlers={{
+              mouseover: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, cs.name, cs.category, `${cs.distanceMiles} mi off route`),
+              mousemove: (e: L.LeafletMouseEvent) => showTooltip(e.originalEvent.clientX, e.originalEvent.clientY, cs.name, cs.category, `${cs.distanceMiles} mi off route`),
               mouseout: hideTooltip,
             }}
           />

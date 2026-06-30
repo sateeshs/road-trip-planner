@@ -19,6 +19,7 @@ export interface CorridorStop {
   lng: number
   distanceMiles: number      // perpendicular distance from route line
   routeFraction: number      // 0–1: where along route this stop sits (for ordering)
+  nearStopCity: string       // nearest named trip stop (city name for display)
 }
 
 // ─── Overpass mirrors (client-side) ─────────────────────────────────────────
@@ -132,27 +133,112 @@ function distToRoute(lat: number, lng: number, geometry: RouteGeometry): number 
   return minKm
 }
 
+/**
+ * Returns what fraction (0–1) along the route polyline a lat/lng point is closest to.
+ * Used to compare a corridor POI's route position against each stop's route position,
+ * which is far more reliable than haversine distance on routes that curve significantly
+ * (e.g. Northville → Soo Locks → Pictured Rocks arcs through central Michigan).
+ */
+function routeFractionOf(lat: number, lng: number, geometry: RouteGeometry): number {
+  let totalKm = 0
+  const segKms: number[] = []
+  for (let i = 1; i < geometry.length; i++) {
+    const km = haversineKm(geometry[i - 1][0], geometry[i - 1][1], geometry[i][0], geometry[i][1])
+    segKms.push(km)
+    totalKm += km
+  }
+  if (totalKm === 0) return 0
+
+  let bestFrac = 0
+  let minDist = Infinity
+  let accumulated = 0
+  for (let i = 1; i < geometry.length; i++) {
+    const [alat, alng] = geometry[i - 1]
+    const [blat, blng] = geometry[i]
+    const dx = blng - alng, dy = blat - alat
+    const lenSq = dx * dx + dy * dy
+    const t = lenSq > 0 ? Math.max(0, Math.min(1, ((lng - alng) * dx + (lat - alat) * dy) / lenSq)) : 0
+    const dist = haversineKm(lat, lng, alat + t * dy, alng + t * dx)
+    if (dist < minDist) {
+      minDist = dist
+      bestFrac = (accumulated + t * segKms[i - 1]) / totalKm
+    }
+    accumulated += segKms[i - 1]
+  }
+  return bestFrac
+}
+
+/**
+ * Returns the stop city whose route-fraction position is closest to the given fraction.
+ * Precompute stopFractions once per route to avoid redundant geometry walks.
+ */
+function nearestStopByFraction(poiFraction: number, stops: RouteStop[], stopFractions: number[]): string {
+  let best = stops[0]
+  let bestDiff = Infinity
+  for (let i = 0; i < stops.length; i++) {
+    const diff = Math.abs(stopFractions[i] - poiFraction)
+    if (diff < bestDiff) { bestDiff = diff; best = stops[i] }
+  }
+  return best.city
+}
+
 // ─── Category → emoji mapping ────────────────────────────────────────────────
 
 function categoryEmoji(tags: Record<string, string>): { category: string; emoji: string } {
   const t = tags.tourism, h = tags.historic, n = tags.natural, l = tags.leisure
+  const sport = tags.sport, amenity = tags.amenity, attraction = tags.attraction
+  const name = (tags.name ?? '').toLowerCase()
+
+  // Name-based inference for water/activity businesses (highest priority)
+  if (/cruise|cruises/.test(name))              return { category: 'Cruise', emoji: '🚢' }
+  if (/kayak|canoe|paddle/.test(name))          return { category: 'Kayaking', emoji: '🚣' }
+  if (/boat.?tour|boat.?rental/.test(name))     return { category: 'Boat Tour', emoji: '🛥️' }
+  if (/raft/.test(name))                        return { category: 'Rafting', emoji: '🌊' }
+  if (/zip.?line/.test(name))                   return { category: 'Zip Line', emoji: '🪂' }
+
+  // Explicit OSM tag matches
+  if (t === 'boat_tour')          return { category: 'Boat Tour', emoji: '🛥️' }
+  if (t === 'camp_site')          return { category: 'Campground', emoji: '⛺' }
+  if (amenity === 'boat_rental')  return { category: 'Boat Rental', emoji: '🛥️' }
+  if (attraction === 'boat_tour') return { category: 'Boat Tour', emoji: '🛥️' }
+  if (attraction === 'zip_line')  return { category: 'Zip Line', emoji: '🪂' }
+  if (attraction === 'scenic_railway') return { category: 'Scenic Train', emoji: '🚂' }
+  if (attraction === 'gondola_lift' || attraction === 'chair_lift') return { category: 'Gondola', emoji: '🚡' }
+
+  // Sport tags
+  if (sport === 'kayak' || sport === 'kayaking') return { category: 'Kayaking', emoji: '🚣' }
+  if (sport === 'canoe' || sport === 'canoeing') return { category: 'Canoeing', emoji: '🚣' }
+  if (sport === 'rafting')        return { category: 'Rafting', emoji: '🌊' }
+  if (sport === 'sailing')        return { category: 'Sailing', emoji: '⛵' }
+  if (sport === 'rowing')         return { category: 'Rowing', emoji: '🚣' }
+
+  // Leisure
+  if (l === 'marina')             return { category: 'Marina', emoji: '⚓' }
+  if (l === 'water_park')         return { category: 'Water Park', emoji: '💦' }
+  if (l === 'nature_reserve')     return { category: 'Nature Reserve', emoji: '🌳' }
+  if (l === 'park')               return { category: 'Park', emoji: '🌳' }
+
+  // Tourism
   if (t === 'museum')             return { category: 'Museum', emoji: '🏛️' }
   if (t === 'viewpoint')          return { category: 'Viewpoint', emoji: '🔭' }
   if (t === 'theme_park')         return { category: 'Theme Park', emoji: '🎡' }
   if (t === 'zoo')                return { category: 'Zoo', emoji: '🦒' }
   if (t === 'aquarium')           return { category: 'Aquarium', emoji: '🐠' }
   if (t === 'attraction')         return { category: 'Attraction', emoji: '🗺️' }
+
+  // Historic
   if (h === 'monument' || h === 'memorial') return { category: 'Monument', emoji: '🗿' }
   if (h === 'castle')             return { category: 'Castle', emoji: '🏰' }
   if (h)                          return { category: 'Historic Site', emoji: '🏺' }
+
+  // Natural
   if (n === 'peak')               return { category: 'Mountain', emoji: '🏔️' }
   if (n === 'waterfall')          return { category: 'Waterfall', emoji: '💧' }
   if (n === 'beach')              return { category: 'Beach', emoji: '🏖️' }
   if (n === 'cave_entrance')      return { category: 'Cave', emoji: '🕳️' }
   if (n === 'hot_spring')         return { category: 'Hot Spring', emoji: '♨️' }
   if (n)                          return { category: 'Natural Site', emoji: '🌿' }
-  if (l === 'nature_reserve')     return { category: 'Nature Reserve', emoji: '🌳' }
-  if (l === 'park')               return { category: 'Park', emoji: '🌳' }
+
   return { category: 'Point of Interest', emoji: '📍' }
 }
 
@@ -161,8 +247,8 @@ function categoryEmoji(tags: Record<string, string>): { category: string; emoji:
 const SAMPLE_EVERY_MILES = 25
 const MAX_SAMPLE_POINTS  = 10
 const QUERY_RADIUS_M     = 14000  // ~8.7 miles
-const MAX_PER_POINT      = 5
-const MAX_TOTAL          = 8
+const MAX_PER_POINT      = 8
+const MAX_TOTAL          = 12
 
 export function useCorridorStops(
   routeGeometry: RouteGeometry | null,
@@ -202,7 +288,11 @@ export function useCorridorStops(
   node["tourism"~"attraction|museum|viewpoint|theme_park|zoo|aquarium"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
   node["historic"~"monument|memorial|castle|ruins|archaeological_site"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
   node["natural"~"peak|waterfall|beach|hot_spring|cave_entrance"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
-  node["leisure"~"nature_reserve|park"]["name"]["leisure"!="park"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["leisure"~"nature_reserve|marina|water_park"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["tourism"~"boat_tour|camp_site"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["amenity"~"boat_rental"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["sport"~"kayak|kayaking|canoe|canoeing|sailing|rafting|rowing"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
+  node["attraction"~"boat_tour|scenic_railway|zip_line|gondola_lift|chair_lift"]["name"](around:${QUERY_RADIUS_M},${lat},${lng});
 );
 out ${MAX_PER_POINT};`
 
@@ -211,6 +301,15 @@ out ${MAX_PER_POINT};`
         )
 
         if (controller.signal.aborted) return
+
+        // Precompute each stop's fraction along the route once — used for
+        // "Near [City]" labelling. Route-fraction comparison is far more accurate
+        // than haversine on routes that curve (e.g. Northville → Soo Locks → Pictured Rocks
+        // arcs east then west, making geographic distance to Northville misleadingly short
+        // for POIs that are actually near the destination).
+        const stopFractions = stops.map(s =>
+          routeFractionOf(s.coordinates.lat, s.coordinates.lng, routeGeometry)
+        )
 
         // Flatten, dedup by name, filter out existing stops and unnamed/short names
         const seen = new Set<string>()
@@ -252,6 +351,7 @@ out ${MAX_PER_POINT};`
               lng: el.lon,
               distanceMiles: Math.round(distMiles * 10) / 10,
               routeFraction: sampleFraction,
+              nearStopCity: nearestStopByFraction(sampleFraction, stops, stopFractions),
             })
           }
         })

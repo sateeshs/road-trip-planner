@@ -49,6 +49,7 @@ export interface Hotel {
   amenities?: string[]
   photoUrl?: string
   availableOffers?: HotelOffer[]
+  isCamping?: boolean    // true for camp_site / caravan_site fallback results
 }
 
 export interface HotelOffer {
@@ -127,4 +128,56 @@ export interface ChatMessage {
     hotels?: Hotel[]
     bookingRequest?: BookingRequest
   }
+}
+
+// ─── AI SDK tool-invocation part types ─────────────────────────────────────
+
+export interface ToolInvocationPart {
+  type: 'tool-invocation'
+  toolInvocation: {
+    toolName: string
+    toolCallId: string
+    state: 'call' | 'partial-call' | 'result'
+    result?: unknown
+    args?: unknown
+  }
+}
+
+// Return shapes from each AI tool — used by chat-ui card components
+
+export interface SuggestRouteStopsResult {
+  stops: RouteStop[]
+  routeGeometry: RouteGeometry | null
+  totalDistance: string | null
+  totalDuration: string | null
+  message: string
+}
+
+export interface SearchAttractionsResult {
+  attractions: Attraction[]
+  city: string
+}
+
+export interface SearchHotelsResult {
+  hotels: Hotel[]
+  city: string
+  checkIn: string
+  checkOut: string
+}
+
+export interface SearchSurroundingsResult {
+  surroundings: Attraction[]
+  city: string
+  activities: string[]
+}
+
+export interface SearchRestaurantsResult {
+  restaurants: Attraction[]
+  city: string
+}
+
+export interface RenderUiResult {
+  component: 'route_summary' | 'hotel_comparison' | 'day_plan' | 'booking_confirmed' | 'trip_stats'
+  title: string
+  data: Record<string, unknown>
 }

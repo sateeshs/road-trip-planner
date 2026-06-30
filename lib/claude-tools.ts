@@ -4,82 +4,9 @@ import { searchAttractions, searchSurroundings, ATTRACTION_CATEGORIES, type Surr
 import { searchHotelsByCity, getHotelOffers, CITY_TO_IATA } from './amadeus-client'
 import { addDays, resolveCityCoords } from './route-utils'
 import { getRoute, metersToMiles, secondsToTime } from './osrm-client'
+import { overpassQuery } from './overpass-client'
+import type { OsmElement } from './overpass-client'
 import type { RouteStop, Attraction, Hotel } from '@/types'
-
-// ─── Overpass API (OpenStreetMap, free, no key) ────────────────────────────
-// Races 4 public mirrors via Promise.any() — first to respond wins.
-// Pattern ported from TREK's mapsService.ts overpassFetch().
-
-const OVERPASS_MIRRORS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-]
-
-interface OsmElement {
-  id: number
-  type: 'node' | 'way' | 'relation'
-  lat?: number
-  lon?: number
-  center?: { lat: number; lon: number }
-  tags?: Record<string, string>
-}
-
-// In-memory POI cache — 5-min TTL, 500-entry FIFO cap (ported from TREK)
-const POI_CACHE = new Map<string, { at: number; elements: OsmElement[] }>()
-const POI_CACHE_TTL_MS = 5 * 60 * 1000
-const POI_CACHE_MAX = 500
-
-async function overpassQuery(ql: string): Promise<OsmElement[]> {
-  // Cache check
-  const cached = POI_CACHE.get(ql)
-  if (cached) {
-    if (Date.now() - cached.at < POI_CACHE_TTL_MS) return cached.elements
-    POI_CACHE.delete(ql)
-  }
-
-  const body = `data=${encodeURIComponent(ql)}`
-  const controllers: AbortController[] = []
-
-  const attempt = async (url: string): Promise<OsmElement[]> => {
-    const ctrl = new AbortController()
-    controllers.push(ctrl)
-    const timer = setTimeout(() => ctrl.abort(), 12_000)
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        signal: ctrl.signal,
-      })
-      if (!res.ok) throw new Error(`Overpass ${res.status} @ ${url}`)
-      const data = await res.json() as { elements?: OsmElement[]; remark?: string }
-      // Overpass signals timeout via 'remark' even on HTTP 200
-      if (data.remark) throw new Error(`Overpass remark @ ${url}`)
-      if (!Array.isArray(data.elements)) throw new Error(`Non-OSM body @ ${url}`)
-      return data.elements
-    } finally {
-      clearTimeout(timer)
-    }
-  }
-
-  try {
-    const elements = await Promise.any(OVERPASS_MIRRORS.map(attempt))
-    // Store in cache
-    if (POI_CACHE.size >= POI_CACHE_MAX) {
-      const oldest = POI_CACHE.keys().next().value
-      if (oldest !== undefined) POI_CACHE.delete(oldest)
-    }
-    POI_CACHE.set(ql, { at: Date.now(), elements })
-    return elements
-  } catch {
-    return []
-  } finally {
-    // Cancel all losing / in-flight requests
-    for (const ctrl of controllers) { try { ctrl.abort() } catch { /* noop */ } }
-  }
-}
 
 // ─── OSM tag → human-readable category (ported + expanded from TREK) ───────
 
@@ -380,6 +307,86 @@ out center tags 20;`
   return results
 }
 
+// Campground amenity tags → human-readable labels
+const CAMP_AMENITIES: Array<[string, string, string]> = [
+  ['electric_hookup', 'yes', 'Electric Hookup'],
+  ['hookup', 'electric', 'Electric Hookup'],
+  ['power_supply', 'yes', 'Power Supply'],
+  ['water_hookup', 'yes', 'Water Hookup'],
+  ['sewage', 'yes', 'Sewer Hookup'],
+  ['shower', 'yes', 'Showers'],
+  ['toilets', 'yes', 'Restrooms'],
+  ['wifi', 'yes', 'Free WiFi'],
+  ['internet_access', 'wlan', 'Free WiFi'],
+  ['dogs_leash', 'yes', 'Dogs Welcome'],
+  ['dogs', 'yes', 'Dogs Welcome'],
+  ['fire_pit', 'yes', 'Fire Pits'],
+]
+
+async function osmCampgrounds(city: string, state: string): Promise<Hotel[]> {
+  const coords = await resolveCityCoords(city)
+  if (!coords) return []
+  const { lat, lng } = coords
+  const r = 25000  // wider radius (25 km) — campgrounds are often outside city centers
+
+  const ql = `[out:json][timeout:12];
+(
+  node["tourism"~"camp_site|caravan_site"](around:${r},${lat},${lng});
+  way["tourism"~"camp_site|caravan_site"](around:${r},${lat},${lng});
+);
+out center tags 15;`
+
+  const elements = await overpassQuery(ql)
+  const seen = new Set<string>()
+  const results: Hotel[] = []
+
+  for (const el of elements) {
+    const elLat = el.lat ?? el.center?.lat
+    const elLng = el.lon ?? el.center?.lon
+    const tags = el.tags ?? {}
+    const name = tags.name ?? tags['name:en']
+    if (!elLat || !elLng || !name || seen.has(name)) continue
+    seen.add(name)
+
+    const isCamping = true
+    const isRV = tags.tourism === 'caravan_site'
+    const hasElectric = tags.electric_hookup === 'yes' || tags.hookup === 'electric' || tags.power_supply === 'yes'
+
+    const amenities = CAMP_AMENITIES
+      .filter(([key, val]) => tags[key] === val)
+      .map(([,, label]) => label)
+      .filter((v, i, a) => a.indexOf(v) === i)  // dedupe
+
+    const basePrice = isRV ? 45 : hasElectric ? 40 : 30
+
+    results.push({
+      hotelId: `osm-camp-${el.type}-${el.id}`,
+      name,
+      address: osmAddress(tags, city),
+      coordinates: { lat: elLat, lng: elLng },
+      pricePerNight: basePrice,
+      currency: 'USD',
+      dealTag: hasElectric ? '⚡ Electric Hookup' : isRV ? '🚐 RV Sites' : undefined,
+      amenities,
+      isCamping,
+      availableOffers: [{
+        offerId: `osm-camp-offer-${el.id}`,
+        roomType: isRV ? 'RV / Full-Hookup Site' : hasElectric ? 'Electric Tent Site' : 'Tent Site',
+        bedType: 'Tent / RV',
+        price: basePrice,
+        currency: 'USD',
+        cancellationPolicy: 'Free cancellation',
+        breakfastIncluded: false,
+        bookingUrl: tags.website ?? tags['contact:website'] ?? `https://www.google.com/search?q=${encodeURIComponent(name + ' ' + city + ' ' + state + ' camping reservations')}`,
+      }],
+    })
+    if (results.length >= 6) break
+  }
+
+  // Prefer sites with electric hookups first
+  return results.sort((a) => (a.dealTag?.includes('Electric') ? -1 : 1))
+}
+
 export const agentTools = {
   /**
    * Called after Claude decides on the stop cities.
@@ -451,19 +458,19 @@ export const agentTools = {
 
       // Auto-populate surroundings ONLY for water-adjacent stops (lakes, rivers, harbors)
       // so cruise/kayak activities appear without waiting for a separate explore_surroundings call.
-      // Hard cap of 5s per query so we don't consume the 30s edge budget that
-      // search_attractions and search_hotels need.
+      // Hard cap of 3s total — search_attractions and search_hotels must still fit in the
+      // 30s Edge budget. qlTimeout=4s keeps the Overpass query under the outer timeout.
       const surroundingsByCity: Record<string, Attraction[]> = {}
       const waterStops = stops.slice(1).filter(s => isWaterAdjacent(s.coordinates.lat, s.coordinates.lng, s.city))
       await Promise.all(
         waterStops.map(async s => {
           try {
             const timeout = new Promise<Attraction[]>((_, reject) =>
-              setTimeout(() => reject(new Error('auto-surr timeout')), 8000)
+              setTimeout(() => reject(new Error('auto-surr timeout')), 3000)
             )
-            // limit=4, qlTimeout=6s — keeps the Overpass query fast within edge budget
+            // limit=4, qlTimeout=4s — tight budget to leave room for search_attractions/hotels
             const surr = await Promise.race([
-              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 4, 6),
+              osmSurroundingsQuery(s.coordinates.lat, s.coordinates.lng, s.city, 4, 4),
               timeout,
             ])
             if (surr.length > 0) surroundingsByCity[s.city] = surr
@@ -588,11 +595,28 @@ export const agentTools = {
       }
       // Fallback: OpenStreetMap hotels via Overpass (free, no key required)
       try {
-        const hotels = await osmHotels(city, city.split(',')[0], checkIn, checkOut)
+        const state = city.split(',')[1]?.trim() ?? city
+        const hotels = await osmHotels(city, state, checkIn, checkOut)
+        // When hotels are sparse (< 2), also fetch campgrounds as an alternative
+        if (hotels.length < 2) {
+          try {
+            const campgrounds = await osmCampgrounds(city, state)
+            return { hotels: [...hotels, ...campgrounds], city, checkIn, checkOut }
+          } catch {
+            // campground fetch failed — return whatever hotels we have
+          }
+        }
         return { hotels, city, checkIn, checkOut }
       } catch (err) {
         console.error('OSM hotels failed:', err)
-        return { hotels: [], city, checkIn, checkOut }
+        // Hotels completely failed — try campgrounds as last resort
+        try {
+          const state = city.split(',')[1]?.trim() ?? city
+          const campgrounds = await osmCampgrounds(city, state)
+          return { hotels: campgrounds, city, checkIn, checkOut }
+        } catch {
+          return { hotels: [], city, checkIn, checkOut }
+        }
       }
     },
   }),
@@ -647,6 +671,161 @@ export const agentTools = {
         return { surroundings: [], city, activities }
       }
 
+    },
+  }),
+
+  search_national_parks: tool({
+    description:
+      'Fetch official NPS data for a national park, lakeshore, monument, or recreation area near a route stop. ' +
+      'Returns park info, entrance fees, campgrounds (with electric hookup details and recreation.gov links), ' +
+      'live alerts/closures, visitor center hours, and current activities. ' +
+      'Call when any stop is near or named after a national park, national lakeshore, national forest, or monument.',
+    parameters: z.object({
+      parkCode: z.string().describe(
+        'NPS 4-letter park code, e.g. "piro" for Pictured Rocks, "yell" for Yellowstone, ' +
+        '"grca" for Grand Canyon, "grsm" for Great Smoky Mountains, "zion" for Zion, ' +
+        '"arch" for Arches, "romo" for Rocky Mountain, "olym" for Olympic, "glac" for Glacier. ' +
+        'If unsure, use the first 4 letters of the park name.',
+      ),
+      includeAlerts: z.boolean().default(true).describe('Fetch live alerts and closures'),
+      includeCampgrounds: z.boolean().default(true).describe('Fetch campground details with fees and hookups'),
+    }),
+    execute: async ({ parkCode, includeAlerts, includeCampgrounds }) => {
+      const NPS_KEY = process.env.NPS_API_KEY ?? 'DEMO_KEY'
+      const base = 'https://developer.nps.gov/api/v1'
+      const headers = { 'X-Api-Key': NPS_KEY }
+
+      async function npsGet(endpoint: string) {
+        const res = await fetch(`${base}${endpoint}`, { headers, signal: AbortSignal.timeout(8000) })
+        if (!res.ok) throw new Error(`NPS API ${endpoint} returned ${res.status}`)
+        return res.json()
+      }
+
+      try {
+        // Always fetch park info
+        const parkData = await npsGet(`/parks?parkCode=${parkCode}&fields=entranceFees,operatingHours,activities,images,weatherInfo`)
+        const park = parkData.data?.[0]
+        if (!park) return { error: `Park code "${parkCode}" not found in NPS database.` }
+
+        // Parallel fetch alerts + campgrounds + thingstodo
+        const [alertsData, campData, thingsData] = await Promise.all([
+          includeAlerts ? npsGet(`/alerts?parkCode=${parkCode}&limit=10`) : Promise.resolve(null),
+          includeCampgrounds ? npsGet(`/campgrounds?parkCode=${parkCode}&limit=25`) : Promise.resolve(null),
+          npsGet(`/thingstodo?parkCode=${parkCode}&limit=20`),
+        ])
+
+        // Shape park info
+        const info = {
+          name: park.fullName,
+          description: park.description,
+          url: park.url,
+          coordinates: { lat: parseFloat(park.latitude), lng: parseFloat(park.longitude) },
+          state: park.states,
+          phone: park.contacts?.phoneNumbers?.[0]?.phoneNumber,
+          email: park.contacts?.emailAddresses?.[0]?.emailAddress,
+          weatherInfo: park.weatherInfo,
+          activities: (park.activities as Array<{ name: string }> | undefined)?.map(a => a.name).slice(0, 20) ?? [],
+          entranceFees: (park.entranceFees as Array<{ cost: string; description: string; title: string }> | undefined)?.map(f => ({
+            title: f.title,
+            cost: `$${parseFloat(f.cost).toFixed(0)}`,
+            description: f.description,
+          })) ?? [],
+          images: (park.images as Array<{ url: string; title: string; caption: string }> | undefined)?.slice(0, 3).map(img => ({
+            url: img.url,
+            title: img.title,
+            caption: img.caption,
+          })) ?? [],
+        }
+
+        // Shape alerts
+        const alerts = (alertsData?.data as Array<{ title: string; description: string; category: string; url: string }> | undefined)?.map(a => ({
+          title: a.title,
+          description: a.description,
+          category: a.category,
+          url: a.url,
+        })) ?? []
+
+        // Shape campgrounds
+        const campgrounds = (campData?.data as Array<{
+          name: string
+          description: string
+          directionsInfo: string
+          weatherOverview: string
+          latLng: string
+          campsites: { totalSites: string; tentOnly: string; electricalHookups: string; rvOnly: string; group: string }
+          amenities: { toilets: string; potableWater: string[]; showers: string[]; internetConnectivity: string; trashRecyclingCollection: string }
+          fees: Array<{ cost: string; description: string; title: string }>
+          reservationInfo: string
+          reservationUrl: string
+          accessibility: { wheelchairAccess: string; rvInfo: string }
+        }> | undefined)?.map(c => {
+          const [lat, lng] = (c.latLng ?? '').split(',').map(parseFloat)
+          const hasElectric = parseInt(c.campsites?.electricalHookups ?? '0') > 0
+          return {
+            name: c.name,
+            description: c.description?.slice(0, 200),
+            coordinates: lat && lng ? { lat, lng } : undefined,
+            sites: {
+              total: parseInt(c.campsites?.totalSites ?? '0'),
+              tentOnly: parseInt(c.campsites?.tentOnly ?? '0'),
+              electricHookups: parseInt(c.campsites?.electricalHookups ?? '0'),
+              rvSites: parseInt(c.campsites?.rvOnly ?? '0'),
+            },
+            hasElectricHookup: hasElectric,
+            amenities: {
+              toilets: c.amenities?.toilets,
+              potableWater: c.amenities?.potableWater?.[0],
+              showers: c.amenities?.showers?.[0],
+              wifi: c.amenities?.internetConnectivity,
+              trash: c.amenities?.trashRecyclingCollection,
+            },
+            fees: (c.fees ?? []).map(f => ({ title: f.title, cost: `$${parseFloat(f.cost).toFixed(0)}` })),
+            reservationInfo: c.reservationInfo?.slice(0, 200),
+            reservationUrl: c.reservationUrl,
+            wheelchairAccess: c.accessibility?.wheelchairAccess,
+            rvInfo: c.accessibility?.rvInfo,
+          }
+        }) ?? []
+
+        // Shape thingstodo — official NPS curated activities with duration, difficulty, accessibility
+        const thingsToDo = (thingsData?.data as Array<{
+          title: string
+          shortDescription: string
+          url: string
+          duration: string
+          difficulty: string
+          isReservationRequired: string
+          doFeesApply: string
+          feeDescription: string
+          arePetsPermittedWithRestrictions: string
+          isAccessibleForBlindOrVisuallyImpaired: string
+          isAccessibleForDeafOrHardOfHearing: string
+          isWheelchairAccessible: string
+          latitude: string
+          longitude: string
+          tags: string[]
+          activities: Array<{ name: string }>
+        }> | undefined)?.map(t => ({
+          title: t.title,
+          description: t.shortDescription,
+          url: t.url,
+          duration: t.duration,
+          difficulty: t.difficulty,
+          reservationRequired: t.isReservationRequired === 'true',
+          feesApply: t.doFeesApply === 'true',
+          feeDescription: t.feeDescription || undefined,
+          petsAllowed: t.arePetsPermittedWithRestrictions !== 'false',
+          wheelchairAccessible: t.isWheelchairAccessible === 'true',
+          coordinates: t.latitude && t.longitude ? { lat: parseFloat(t.latitude), lng: parseFloat(t.longitude) } : undefined,
+          tags: t.tags ?? [],
+          activities: (t.activities ?? []).map(a => a.name),
+        })) ?? []
+
+        return { park: info, alerts, campgrounds, thingsToDo, parkCode }
+      } catch (err) {
+        console.error('NPS API failed:', err)
+        return { error: `Could not fetch NPS data for park "${parkCode}". Try a different park code.` }
+      }
     },
   }),
 
@@ -712,7 +891,74 @@ export const agentTools = {
       }
     },
   }),
+  search_restaurants: tool({
+    description:
+      'Search for restaurants and dining options near a stop city. ' +
+      'Call once per stop AFTER search_hotels completes. ' +
+      'Uses OpenStreetMap data — returns top dining spots (restaurants, cafes, bars) within 5 km.',
+    parameters: z.object({
+      city: z.string().describe('City name — use the exact canonical name from suggest_route_stops'),
+    }),
+    execute: async ({ city }) => {
+      const coords = await resolveCityCoords(city)
+      if (!coords) return { restaurants: [], city }
+
+      const { lat, lng } = coords
+      const radius = 5000 // 5 km
+
+      // OSM dining query — same mirror-racing pattern as other Overpass calls
+      const ql = `
+[out:json][timeout:12];
+(
+  node["amenity"~"restaurant|cafe|fast_food|food_court|bar|pub|bistro"](around:${radius},${lat},${lng});
+);
+out center 20;`
+
+      const elements = await overpassQuery(ql)
+
+      const restaurants: Attraction[] = elements
+        .filter(el => el.tags?.name)
+        .slice(0, 8)
+        .map(el => {
+          const elLat = el.lat ?? el.center?.lat ?? lat
+          const elLng = el.lon ?? el.center?.lon ?? lng
+          const amenity = el.tags?.amenity ?? 'restaurant'
+          return {
+            id: String(el.id),
+            name: el.tags!.name!,
+            category: amenity,
+            address: [
+              el.tags?.['addr:housenumber'],
+              el.tags?.['addr:street'],
+              el.tags?.['addr:city'],
+            ].filter(Boolean).join(' ') || city,
+            coordinates: { lat: elLat, lng: elLng },
+            description: el.tags?.cuisine ? `Cuisine: ${el.tags.cuisine}` : undefined,
+            website: el.tags?.website,
+          }
+        })
+
+      return { restaurants, city }
+    },
+  }),
+  render_ui: tool({
+    description:
+      'Render a rich UI component in the chat window when a visual summary would be more ' +
+      'helpful than text. Call this AFTER other tools have already fetched data. ' +
+      'Do NOT call this to fetch data — only to present data already returned by other tools.',
+    parameters: z.object({
+      component: z.enum(['route_summary', 'hotel_comparison', 'day_plan', 'booking_confirmed', 'trip_stats'])
+        .describe('Which UI component to display'),
+      title: z.string()
+        .describe('Short heading for the card, e.g. "Your 2-Day Trip" or "Booking Confirmed!"'),
+      data: z.record(z.unknown())
+        .describe('Component-specific payload from prior tool results'),
+    }),
+    execute: async ({ component, title, data }) => ({ component, title, data }),
+  }),
 }
+
+export const renderUiTool = agentTools.render_ui
 
 export const SYSTEM_PROMPT = `You are a friendly and knowledgeable US road trip planning assistant. You help families and groups plan amazing road trips across the United States.
 
@@ -729,6 +975,7 @@ TOOL CALL ORDER — always follow this sequence exactly, never skip a step:
 4. Call **search_attractions** for every stop using the canonical city name from step 3.
 5. Call **search_hotels** for every stop using the canonical city name from step 3.
 6. Call **explore_surroundings** for EVERY intermediate stop and the destination — this is mandatory, not optional. Pick activities by geography:
+6b. Call **search_national_parks** if any stop is near or IS a national park, lakeshore, monument, seashore, or recreation area. Use the 4-letter NPS park code. Common codes: piro=Pictured Rocks, yell=Yellowstone, grca=Grand Canyon, grsm=Great Smoky Mountains, zion=Zion, arch=Arches, romo=Rocky Mountain, olym=Olympic, glac=Glacier, yose=Yosemite, acad=Acadia, shen=Shenandoah, badl=Badlands, cuva=Cuyahoga Valley, indu=Indiana Dunes, isle=Isle Royale, slbe=Sleeping Bear Dunes, voya=Voyageurs, apis=Apostle Islands.
    - Great Lakes / Lake Superior / rivers / canals / harbors → cruise, boat_tour, kayaking, fishing, boating, swimming
    - Coastal/bay cities → cruise, boat_tour, kayaking, fishing, swimming
    - National parks / forests / lakeshore → hiking, kayaking, camping, scenic_views, waterfalls, boat_tour
@@ -753,4 +1000,43 @@ ROUTE QUALITY RULES — always apply these when planning or evaluating a route:
 - **User intent preservation**: NEVER remove or reorder stops the user explicitly named. If the user said "stop in Nashville", Nashville stays. You may suggest adding stops, never silently replace one.
 - **Seasonal conditions**: proactively flag known issues — mountain passes that close in winter (Going-to-the-Sun Road before late June), peak foliage timing (New England: mid-October), hurricane season (Gulf Coast: June–November), extreme desert heat (Arizona/Nevada: July–August). Suggest timing adjustments or alternates when relevant.
 - **Round trip detection**: if the user says "road trip", "loop", "circular", "exploring", or "scenic drive" without a clear destination — or if origin and destination are the same city — ask: "Sounds like a loop trip — want me to plan this as a round trip back to [origin]? I can optimize the full circuit to avoid backtracking."
-- **Budget awareness**: if the user mentions a budget, acknowledge it and factor it into hotel tier recommendations and number of stops. Don't over-plan a luxury itinerary for a budget trip.`
+- **Budget awareness**: if the user mentions a budget, acknowledge it and factor it into hotel tier recommendations and number of stops. Don't over-plan a luxury itinerary for a budget trip.
+- **Camping fallback**: when search_hotels returns campgrounds (isCamping results), mention them enthusiastically — "No hotels nearby, but I found campgrounds with electric hookups!" Highlight electric hookup availability and whether reservations are needed.
+- **NPS data**: when search_national_parks returns alerts, always mention active closures upfront ("⚠️ Miners Castle road is currently closed"). Highlight campgrounds with electric hookups and link to their reservationUrl (recreation.gov). Present entrance fees clearly. If the park has >20 activities, highlight the top 5 most relevant to the user's trip style.
+
+GENERATIVE UI — use render_ui to present data visually after tools have fetched it:
+- After suggest_route_stops + search_attractions + search_hotels + explore_surroundings complete: call render_ui with component='trip_stats', title='Your Trip', data containing stops, distance, and duration summary.
+- After build_booking_summary succeeds: call render_ui with component='booking_confirmed', title='Booking Confirmed!', data containing hotel name, check-in, check-out, nights, price.
+- If user asks for a day-by-day breakdown: call render_ui with component='day_plan', title='Day N — CityName', data containing day, city, and activities.
+- Never call render_ui to fetch or look up data. Only call it to present data that other tools have already returned.
+- Never call render_ui before other data-fetching tools have run.
+
+GROUNDING:
+Never fabricate hotel names, prices, attraction ratings, or restaurant details. If a tool returns no results or the data is unavailable, say so clearly. Do not invent specifics.
+
+TOOL CALL ORDER UPDATE — after explore_surroundings, also call:
+8. Call **search_restaurants** for every stop using the canonical city name from suggest_route_stops.
+
+STRUCTURED RESPONSE FORMAT — after all tools complete, produce a response with these exact sections:
+
+**Route Overview**
+[origin] → [stop1] → [stop2] → [destination] · [total distance] · [total drive time]
+
+**Stops & Drive Times**
+- [City]: [drive time] from [previous city] via [highway]
+
+**Hotels**
+- [City]: [hotel name] — $[price]/night
+
+**Activities**
+- [City]: [2-3 attraction names with emoji]
+
+**Dining**
+- [City]: [1-2 restaurant names with type emoji]
+(omit this section if search_restaurants hasn't run yet)
+
+**Trip Budget Estimate**
+Estimated total: $[min]–$[max] ([N] nights · [N] stops)
+
+**Practical Tips**
+[toll warnings, seasonal notes, rest stop suggestions — omit if none apply]`

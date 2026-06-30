@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { TripProvider, useTripContext } from '@/contexts/TripContext'
 import ChatPanel from '@/components/ChatPanel'
+import ChatModal from '@/components/ChatModal'
 import MapView from '@/components/MapView'
 import StopBottomSheet from '@/components/StopBottomSheet'
 import FloatingRouteSummary from '@/components/FloatingRouteSummary'
@@ -72,6 +73,8 @@ function TripLayout() {
     planOpen,
     setPlanOpen,
     removeFromPlan,
+    tripStyles,
+    toggleTripStyle,
     tripId,
     membersCount,
     saveTripToDb,
@@ -79,6 +82,8 @@ function TripLayout() {
   } = useTripContext()
 
   const [membersOpen, setMembersOpen] = useState(false)
+  const [chatModalOpen, setChatModalOpen] = useState(false)
+  const [highlightedCorridorStops, setHighlightedCorridorStops] = useState<import('@/hooks/useCorridorStops').CorridorStop[]>([])
 
   // Phase 7: corridor opportunistic stops
   const corridorStops = useCorridorStops(routeGeometry, stops)
@@ -114,6 +119,7 @@ function TripLayout() {
           selectedStop={selectedStop}
           confirmedReservations={confirmedReservations}
           proactivePOIs={proactivePois}
+          highlightedCorridorStops={highlightedCorridorStops}
           onStopClick={stop => setSelectedStop(stop)}
           onMapRightClick={handleMapRightClick}
         />
@@ -146,7 +152,15 @@ function TripLayout() {
         onInputChange={handleInputChange}
         onSubmit={handleSubmit}
         onSuggestionSelect={handleSuggestionSelect}
+        onExpand={() => setChatModalOpen(true)}
+        tripStyles={tripStyles}
+        onToggleTripStyle={toggleTripStyle}
       />
+
+      {/* Expanded chat modal — reads from TripContext directly, always in sync */}
+      {chatModalOpen && (
+        <ChatModal onClose={() => setChatModalOpen(false)} />
+      )}
 
       {/* Route summary pill (top-center) */}
       <FloatingRouteSummary
@@ -170,6 +184,14 @@ function TripLayout() {
           stops={corridorStops}
           onAdd={handleAddCorridorStop}
           chatOpen={!chatCollapsed}
+          highlightedIds={new Set(highlightedCorridorStops.map(s => s.id))}
+          onHighlight={stop =>
+            setHighlightedCorridorStops(prev =>
+              prev.some(s => s.id === stop.id)
+                ? prev.filter(s => s.id !== stop.id)
+                : [...prev, stop]
+            )
+          }
         />
       )}
 

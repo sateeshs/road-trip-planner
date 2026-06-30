@@ -3,15 +3,24 @@ import Google from 'next-auth/providers/google'
 import { connectDB } from '@/lib/mongodb'
 import { User } from '@/lib/models/User'
 
+// Validate required Google OAuth env vars at request time (not build time).
+// These are read lazily inside the provider so Next.js static analysis can
+// still import auth.ts during build without throwing on missing CI secrets.
+const googleClientId = process.env.GOOGLE_CLIENT_ID ?? ''
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET ?? ''
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
     }),
   ],
   callbacks: {
     async signIn({ user, account }) {
+      if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+        throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set')
+      }
       if (account?.provider === 'google') {
         try {
           await connectDB()
