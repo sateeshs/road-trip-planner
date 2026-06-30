@@ -34,7 +34,15 @@ function createServer(): McpServer {
     async ({ hotelId, hotelName, checkIn, checkOut }) => {
       const payload = {
         available: true, hotelId, hotelName, checkIn, checkOut,
-        offers: [{ id: `offer-${hotelId}`, roomType: 'Standard Room', bedType: 'King' }],
+        offers: [{
+          id: `offer-${hotelId}-std`,
+          roomType: 'Standard Room',
+          bedType: 'King',
+          price: 120,
+          currency: 'USD',
+          cancellationPolicy: 'Non-refundable',
+          breakfastIncluded: false,
+        }],
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
     }

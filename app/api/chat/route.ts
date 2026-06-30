@@ -63,6 +63,8 @@ export async function POST(req: Request) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let tools: Record<string, any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mcpClients: Array<{ close: () => Promise<any> }> = []
 
   if (USE_MCP) {
     // MCP mode — tools served from Cloudflare Workers via Streamable HTTP
@@ -77,6 +79,8 @@ export async function POST(req: Request) {
         transport: new StreamableHTTPClientTransport(new URL(process.env.HOTELS_MCP_URL!)),
       }),
     ])
+
+    mcpClients = [routingClient, placesClient, hotelsClient]
 
     const [routingTools, placesTools, hotelTools] = await Promise.all([
       routingClient.tools(),
@@ -103,6 +107,11 @@ export async function POST(req: Request) {
     maxSteps: 15,
     onError: ({ error }) => {
       console.error('[OpenRouter] streamText error:', error)
+    },
+    onFinish: async () => {
+      if (mcpClients.length > 0) {
+        await Promise.allSettled(mcpClients.map((c) => c.close()))
+      }
     },
   })
 
